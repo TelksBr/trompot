@@ -122,8 +122,12 @@ export default class ConfigWAEvents {
     try {
       for (const message of messages || []) {
         try {
-          if (!message) return;
-          if (message.key.remoteJid == 'status@broadcast') return;
+          if (!message) continue;
+
+          // v7: key pode ser null/undefined no tipo, garantir antes de usar
+          const key = message.key;
+          if (!key) continue;
+          if (key.remoteJid == 'status@broadcast') continue;
 
           if (!message.message) {
             if (
@@ -136,7 +140,7 @@ export default class ConfigWAEvents {
             }
 
             const msgRetryCount =
-              this.wa.config.msgRetryCounterCache?.get<number>(message.key.id!);
+              this.wa.config.msgRetryCounterCache?.get<number>(key.id!);
 
             if (msgRetryCount != this.wa.config.maxMsgRetryCount) {
               const time = this.wa.config.retryRequestDelayMs || 1000;
@@ -145,7 +149,7 @@ export default class ConfigWAEvents {
 
               const newMsgRetryCount =
                 this.wa.config.msgRetryCounterCache?.get<number>(
-                  message.key.id!,
+                  key.id!,
                 );
 
               if (!this.wa.config.readAllFailedMessages) {
@@ -181,11 +185,11 @@ export default class ConfigWAEvents {
             return; // Not read empty messages
           }
 
-          if (this.wa.messagesCached.includes(message.key.id!)) return;
+          if (this.wa.messagesCached.includes(key.id!)) return;
 
-          this.wa.addMessageCache(message.key.id!);
+          this.wa.addMessageCache(key.id!);
 
-          const chatId = fixID(message.key.remoteJid || this.wa.id);
+          const chatId = fixID(key.remoteJid || this.wa.id);
 
           const chat = await this.wa.getChat(new Chat(chatId));
 
@@ -204,17 +208,17 @@ export default class ConfigWAEvents {
             unreadCount: (chat?.unreadCount || 0) + 1,
             timestamp,
             name:
-              message.key.id?.includes('@s') && !message.key.fromMe
+              key.id?.includes('@s') && !key.fromMe
                 ? message.pushName || message.verifiedBizName || undefined
                 : undefined,
           });
 
           const userId = fixID(
-            message.key.fromMe
+            key.fromMe
               ? this.wa.id
-              : message.key.participant ||
+              : key.participant ||
                   message.participant ||
-                  message.key.remoteJid ||
+                  key.remoteJid ||
                   '',
           );
 
@@ -223,7 +227,12 @@ export default class ConfigWAEvents {
             name: message.pushName || message.verifiedBizName || undefined,
           });
 
-          const msg = await new ConvertWAMessage(this.wa, message, type).get();
+          // v7: tipagem de WAMessageKey exige key não nula; após o guard podemos fazer cast
+          const msg = await new ConvertWAMessage(
+            this.wa,
+            message as any,
+            type,
+          ).get();
 
           if (msg.fromMe && msg.isUnofficial) {
             await this.wa.updateChat({ id: msg.chat.id, unreadCount: 0 });
@@ -262,7 +271,8 @@ export default class ConfigWAEvents {
       try {
         for (const message of messages || []) {
           try {
-            if (message.key.remoteJid == 'status@broadcast') return;
+            if (!message.key || message.key.remoteJid == 'status@broadcast')
+              return;
 
             await this.readMessages([{ key: message.key, ...message.update }]);
 
@@ -418,6 +428,9 @@ export default class ConfigWAEvents {
 
       for (const chat of update.chats || []) {
         try {
+          // v7: id pode ser null/undefined no tipo, ignorar chats sem id
+          if (!chat.id) continue;
+
           if (!('unreadCount' in chat) || chat.isDefaultSubgroup === true) {
             ignoreChats.push(chat.id);
 
@@ -456,7 +469,8 @@ export default class ConfigWAEvents {
             : this.wa.config.autoLoadContactInfo;
 
           if (autoLoad) {
-            await this.wa.readChat({ id: chat.id }, chat);
+            // v7: tipo de chat.id permite null, mas já garantimos acima que existe
+            await this.wa.readChat({ id: chat.id! }, chat as any);
           }
         } catch (err) {
           this.wa.emit('error', err);
@@ -465,7 +479,11 @@ export default class ConfigWAEvents {
 
       for (const message of update?.messages || []) {
         try {
-          if (!message?.message || message.key.remoteJid == 'status@broadcast')
+          if (
+            !message?.message ||
+            !message.key?.remoteJid ||
+            message.key.remoteJid == 'status@broadcast'
+          )
             continue;
           if (ignoreChats.includes(fixID(message.key.remoteJid || '')))
             continue;

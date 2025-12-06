@@ -137,7 +137,8 @@ export const getBaileysAuth = async (
               let value = await replacer(await auth.get(`${type}-${id}`));
 
               if (type === 'app-state-sync-key' && value) {
-                value = proto.Message.AppStateSyncKeyData.fromObject(value);
+                // v7.0.0-rc.5: Usar create em vez de fromObject
+                value = proto.Message.AppStateSyncKeyData.create(value);
               }
 
               data[id] = value;

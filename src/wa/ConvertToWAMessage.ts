@@ -5,6 +5,7 @@ import {
   isJidGroup,
   MiscMessageGenerationOptions,
   proto,
+  BufferJSON,
 } from '@whiskeysockets/baileys';
 
 import Message, { MessageStatus, MessageType } from '../messages/Message';
@@ -297,6 +298,8 @@ export default class ConvertToWAMessage {
       poll: {
         name: message.text,
         values: message.options.map((opt) => opt.name),
+        // v7.0.0-rc.5: Configurações básicas para enquetes
+        selectableCount: 1,
       },
     };
   }

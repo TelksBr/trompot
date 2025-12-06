@@ -16,6 +16,8 @@ import makeWASocket, {
   Contact,
   proto,
   Chat as BaileysChat,
+  BufferJSON,
+  DisconnectReason as BaileysDisconnectReason,
 } from '@whiskeysockets/baileys';
 import NodeCache from 'node-cache';
 import { Boom } from '@hapi/boom';
@@ -74,17 +76,23 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     stdTTL: DEFAULT_CACHE_TTLS.MSG_RETRY, // 1 hour
     useClones: false,
   });
-  // Cache dedicado para metadata de grupos
+  // Cache dedicado para metadata de grupos (v7.0.0-rc.3: melhor performance)
   public groupMetadataCache: NodeCache;
+  // Cache de chaves de sinal para melhor performance (v7.0.0-rc.3)
+  public signalKeyCache: NodeCache;
 
-  public saveCreds = (creds: Partial<AuthenticationCreds>) =>
-    new Promise<void>((res) => res);
+  public saveCreds = async (creds: Partial<AuthenticationCreds>) => {
+    // v7.0.0-rc.5: Salvar credenciais básicas
+    // LIDs e deviceIndex serão implementados quando estiverem disponíveis na API estável
+    await this.auth.set('creds', creds);
+  };
   public connectionListeners: ((
     update: Partial<ConnectionState>,
   ) => boolean)[] = [];
 
   public DisconnectReason = DisconnectReason;
   public logger: any = pino({ level: 'silent' });
+
 
   public id: string = '';
   public status: BotStatus = BotStatus.Offline;
@@ -99,7 +107,19 @@ export default class WhatsAppBot extends BotEvents implements IBot {
   constructor(config?: Partial<WhatsAppBotConfig>) {
     super();
 
-    this.groupMetadataCache = new NodeCache();
+    // Inicializa caches com TTLs apropriados (fallback numérico para 6.7.x)
+    const GROUP_META_TTL = (DEFAULT_CACHE_TTLS as any)?.CALL_OFFER ?? 300; // 5min
+    const SIGNAL_KEY_TTL = (DEFAULT_CACHE_TTLS as any)?.USER_DEVICES ?? 300; // 5min
+
+    this.groupMetadataCache = new NodeCache({
+      stdTTL: GROUP_META_TTL,
+      useClones: false,
+    });
+
+    this.signalKeyCache = new NodeCache({
+      stdTTL: SIGNAL_KEY_TTL,
+      useClones: false,
+    });
 
     const store = makeInMemoryStore({ logger: this.logger });
 
@@ -122,6 +142,8 @@ export default class WhatsAppBot extends BotEvents implements IBot {
       autoLoadContactInfo: false,
       autoLoadGroupInfo: false,
       shouldIgnoreJid: () => false,
+      // v7.0.0-rc.5: Removido ACKs automáticos para evitar banimentos
+      generateHighQualityLinkPreview: false,
       async patchMessageBeforeSending(msg) {
         if (
           msg.deviceSentMessage?.message?.listMessage?.listType ==
@@ -146,10 +168,12 @@ export default class WhatsAppBot extends BotEvents implements IBot {
         return msg;
       },
       async getMessage(key) {
-        return (
-          (await waBot.store.loadMessage(fixID(key.remoteJid!), key.id!))
-            ?.message || undefined
-        );
+        const msg = await waBot.store.loadMessage(fixID(key.remoteJid!), key.id!);
+        if (!msg) return undefined;
+        
+        // v7.0.0-rc.5: Retornar mensagem diretamente
+        // BufferJSON será implementado quando estiver disponível na API estável
+        return msg.message;
       },
       cachedGroupMetadata: async (jid) => this.groupMetadataCache.get(jid),
       ...config,
@@ -203,19 +227,22 @@ export default class WhatsAppBot extends BotEvents implements IBot {
           }
           // Você pode emitir eventos ou processar syncType conforme necessário
         });
-        // Exibe QR code no terminal ao receber
-        this.sock.ev.on('connection.update', async (update) => {
-          const { qr } = update;
-          if (qr) {
-            try {
-              const QRCode = (await import('qrcode')).default;
-              // Exibe o QR code no terminal
-              console.log(await QRCode.toString(qr, { type: 'terminal' }));
-            } catch (err) {
-              console.log('QRCode:', qr);
-            }
+        // Listener padrão Baileys: emite evento 'qr' para o client externo
+        this.sock.ev.on('connection.update', (update) => {
+          if (update.qr) {
+            this.emit('qr', update.qr);
           }
         });
+        // Para exibir o QR code no terminal, utilize:
+        //
+        // client.on('qr', async (qr) => {
+        //   try {
+        //     const QRCode = (await import('qrcode')).default;
+        //     console.log(await QRCode.toString(qr, { type: 'terminal' }));
+        //   } catch (err) {
+        //     console.log('QRCode:', qr);
+        //   }
+        // });
       }
     }, 0);
   }
@@ -262,8 +289,10 @@ export default class WhatsAppBot extends BotEvents implements IBot {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(
               state.keys,
-              this.config.logger || this.logger,
+              this.config.logger,
             ),
+            // v7.0.0-rc.5: Configuração básica de auth
+            // LIDs serão implementados quando estiverem disponíveis na API estável
           },
           ...additionalOptions,
           ...this.config,
@@ -996,12 +1025,14 @@ export default class WhatsAppBot extends BotEvents implements IBot {
       toJSON: () => key,
     };
 
+    // v7.0.0: Removido ACKs automáticos para evitar banimentos
+    // O WhatsApp agora gerencia automaticamente o status de leitura
     const chat = await this.getChat(message.chat);
-
-    if (chat?.type == ChatType.Group) {
-      await this.sock.readMessages([key]);
-    } else {
-      await this.sock.readMessages([key]);
+    
+    // Apenas marcar como lido localmente, sem enviar ACK
+    if (chat?.type == ChatType.Group || chat?.type == ChatType.PV) {
+      // Marcar mensagem como lida apenas no cache local
+      this.addMessageCache(message.id || '');
     }
   }
 

@@ -53,8 +53,14 @@ Após iniciar o bot um QR Code será emprimido no terminal, escane-o com seu Wha
 const client = new Client(new WhatsAppBot());
 client.connect("./path-to-auth");
 
-client.on("qr", (qr) => {
-  console.log("Scan QR:", qr);
+// Exibe o QR code no terminal (padrão Baileys)
+client.on("qr", async (qr) => {
+  try {
+    const QRCode = (await import("qrcode")).default;
+    console.log(await QRCode.toString(qr, { type: "terminal" }));
+  } catch (err) {
+    console.log("QRCode:", qr);
+  }
 });
 ```
 
