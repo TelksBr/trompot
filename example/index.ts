@@ -13,6 +13,7 @@ import Client, {
 const wbot = new WhatsAppBot({
   autoSyncHistory: false,
   useExperimentalServers: true,
+  logLevel: 'info', // Silencia logs internos do pino, mantém apenas console.info do exemplo
 });
 
 const client = new Client(wbot, {
@@ -25,18 +26,48 @@ const client = new Client(wbot, {
 
 client.on('open', (open: { isNewLogin: boolean }) => {
   if (open.isNewLogin) {
-    console.info('Nova conexão');
+    console.info('✅ Nova conexão realizada!');
+  } else {
+    console.info('✅ Reconectado com sessão existente!');
   }
 
-  console.info('Cliente conectado!');
+  console.info('✅ Cliente conectado!');
+  console.info(`📱 Bot ID: ${client.bot.id}`);
+  console.info(`📱 Nome: ${client.bot.name}`);
+  console.info(`📱 Telefone: ${client.bot.phoneNumber}`);
 });
 
-client.on('close', (update) => {
-  console.info(`Cliente desconectou! Motivo: ${update.reason}`);
+client.on('close', async (update) => {
+  console.warn(`⚠️ Cliente desconectou! Motivo: ${update.reason}`);
+  
+  if (update.reason === 401 || update.reason === 421) {
+    console.warn('⚠️ Sessão desconectada do WhatsApp.');
+    console.info('✅ A biblioteca já limpou TODA a sessão automaticamente (creds + todas as keys).');
+    console.info('🔄 Reconectando automaticamente em 2 segundos...');
+    
+    // Reconecta automaticamente após 2 segundos
+    // A biblioteca já limpou TUDO (creds + keys), então um novo QR code será gerado
+    setTimeout(async () => {
+      try {
+        await client.connect('./example/sessions/whatsapp');
+      } catch (error) {
+        console.error('❌ Erro ao reconectar:', error);
+      }
+    }, 2000);
+  } else if (update.reason === 428) {
+    console.error('❌ Erro 428: Sessão inválida. Não será tentada reconexão automática.');
+  }
 });
 
-client.on('qr', (qr: string) => {
-  console.info('QR Gerado:', qr);
+client.on('qr', async (qr: string) => {
+  console.info('📱 QR Code gerado!');
+  try {
+    const QRCode = (await import('qrcode')).default;
+    console.log('\n' + await QRCode.toString(qr, { type: 'terminal', small: true }));
+    console.log('\n📱 Escaneie o QR code acima com seu WhatsApp\n');
+  } catch (err) {
+    console.log('QR Code (texto):', qr);
+  }
 });
 
 client.on('connecting', () => {

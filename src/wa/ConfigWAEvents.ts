@@ -16,12 +16,38 @@ import Chat from '../modules/chat/Chat';
 import WhatsAppBot from './WhatsAppBot';
 import ConvertWAMessage from './ConvertWAMessage';
 import ErrorMessage from '../messages/ErrorMessage';
+import { StateManager } from './core/StateManager';
+import { JID_PATTERNS } from './constants/JIDPatterns';
+import { ErrorCodes, ErrorMessages } from './constants/ErrorCodes';
+import { ConfigDefaults, TIMESTAMP_MULTIPLIER } from './constants/ConfigDefaults';
 
 export default class ConfigWAEvents {
   public wa: WhatsAppBot;
+  private cleanupFunctions: (() => void)[] = [];
+  private stateManager: StateManager | null = null;
 
   constructor(wa: WhatsAppBot) {
     this.wa = wa;
+    // Obtém stateManager de forma type-safe
+    this.stateManager = this.wa.getStateManager?.() || null;
+  }
+
+  /**
+   * Limpa todos os listeners configurados
+   */
+  public cleanup(): void {
+    // Remove todos os listeners do socket
+    if (this.wa.sock?.ev) {
+      // Remove listeners específicos que foram registrados
+      this.cleanupFunctions.forEach(cleanup => {
+        try {
+          cleanup();
+        } catch (error) {
+          // Ignora erros ao limpar
+        }
+      });
+      this.cleanupFunctions = [];
+    }
   }
 
   public configureAll() {
@@ -45,7 +71,7 @@ export default class ConfigWAEvents {
   }
 
   public configCBNotificationRemove() {
-    this.wa.sock.ws.on('CB:notification,,remove', async (data) => {
+    const handler = async (data: any) => {
       for (const content of data.content[0]?.content || []) {
         try {
           await this.wa.groupParticipantsUpdate(
@@ -58,11 +84,16 @@ export default class ConfigWAEvents {
           this.wa.emit('error', err);
         }
       }
+    };
+    
+    this.wa.sock.ws.on('CB:notification,,remove', handler);
+    this.cleanupFunctions.push(() => {
+      this.wa.sock?.ws.off('CB:notification,,remove', handler);
     });
   }
 
   public configCBNotificationAdd() {
-    this.wa.sock.ws.on('CB:notification,,add', async (data) => {
+    const handler = async (data: any) => {
       for (const content of data.content[0]?.content || []) {
         try {
           if (!data.attrs.participant)
@@ -78,11 +109,16 @@ export default class ConfigWAEvents {
           this.wa.emit('error', err);
         }
       }
+    };
+    
+    this.wa.sock.ws.on('CB:notification,,add', handler);
+    this.cleanupFunctions.push(() => {
+      this.wa.sock?.ws.off('CB:notification,,add', handler);
     });
   }
 
   public configCBNotificationPromote() {
-    this.wa.sock.ws.on('CB:notification,,promote', async (data) => {
+    const handler = async (data: any) => {
       for (const content of data.content[0]?.content || []) {
         try {
           await this.wa.groupParticipantsUpdate(
@@ -95,11 +131,16 @@ export default class ConfigWAEvents {
           this.wa.emit('error', err);
         }
       }
+    };
+    
+    this.wa.sock.ws.on('CB:notification,,promote', handler);
+    this.cleanupFunctions.push(() => {
+      this.wa.sock?.ws.off('CB:notification,,promote', handler);
     });
   }
 
   public configCBNotificationDemote() {
-    this.wa.sock.ws.on('CB:notification,,demote', async (data) => {
+    const handler = async (data: any) => {
       for (const content of data.content[0]?.content || []) {
         try {
           await this.wa.groupParticipantsUpdate(
@@ -112,6 +153,11 @@ export default class ConfigWAEvents {
           this.wa.emit('error', err);
         }
       }
+    };
+    
+    this.wa.sock.ws.on('CB:notification,,demote', handler);
+    this.cleanupFunctions.push(() => {
+      this.wa.sock?.ws.off('CB:notification,,demote', handler);
     });
   }
 
@@ -127,7 +173,7 @@ export default class ConfigWAEvents {
           // v7: key pode ser null/undefined no tipo, garantir antes de usar
           const key = message.key;
           if (!key) continue;
-          if (key.remoteJid == 'status@broadcast') continue;
+          if (key.remoteJid === JID_PATTERNS.BROADCAST) continue;
 
           if (!message.message) {
             if (
@@ -143,9 +189,9 @@ export default class ConfigWAEvents {
               this.wa.config.msgRetryCounterCache?.get<number>(key.id!);
 
             if (msgRetryCount != this.wa.config.maxMsgRetryCount) {
-              const time = this.wa.config.retryRequestDelayMs || 1000;
+              const time = this.wa.config.retryRequestDelayMs || ConfigDefaults.DEFAULT_RETRY_DELAY;
 
-              await new Promise((res) => setTimeout(res, time * 3));
+              await new Promise((res) => setTimeout(res, time * ConfigDefaults.RETRY_DELAY_MULTIPLIER));
 
               const newMsgRetryCount =
                 this.wa.config.msgRetryCounterCache?.get<number>(
@@ -197,9 +243,9 @@ export default class ConfigWAEvents {
 
           if (message.messageTimestamp) {
             if (Long.isLong(message.messageTimestamp)) {
-              timestamp = message.messageTimestamp.toNumber() * 1000;
+              timestamp = message.messageTimestamp.toNumber() * TIMESTAMP_MULTIPLIER;
             } else {
-              timestamp = (message.messageTimestamp as number) * 1000;
+              timestamp = (message.messageTimestamp as number) * TIMESTAMP_MULTIPLIER;
             }
           }
 
@@ -208,7 +254,7 @@ export default class ConfigWAEvents {
             unreadCount: (chat?.unreadCount || 0) + 1,
             timestamp,
             name:
-              key.id?.includes('@s') && !key.fromMe
+              key.id?.includes(JID_PATTERNS.USER) && !key.fromMe
                 ? message.pushName || message.verifiedBizName || undefined
                 : undefined,
           });
@@ -257,21 +303,26 @@ export default class ConfigWAEvents {
   }
 
   public configMessagesUpsert() {
-    this.wa.sock.ev.on('messages.upsert', async (m) => {
+    const handler = async (m: any) => {
       try {
         await this.readMessages(m?.messages || [], m.type);
       } catch (err) {
         this.wa.emit('error', err);
       }
+    };
+    
+    this.wa.sock.ev.on('messages.upsert', handler);
+    this.cleanupFunctions.push(() => {
+      this.wa.sock?.ev.off('messages.upsert', handler);
     });
   }
 
   public configMessagesUpdate() {
-    this.wa.sock.ev.on('messages.update', async (messages) => {
+    const handler = async (messages: any) => {
       try {
         for (const message of messages || []) {
           try {
-            if (!message.key || message.key.remoteJid == 'status@broadcast')
+            if (!message.key || message.key.remoteJid === JID_PATTERNS.BROADCAST)
               return;
 
             await this.readMessages([{ key: message.key, ...message.update }]);
@@ -298,6 +349,11 @@ export default class ConfigWAEvents {
       } catch (err) {
         this.wa.emit('error', err);
       }
+    };
+    
+    this.wa.sock.ev.on('messages.update', handler);
+    this.cleanupFunctions.push(() => {
+      this.wa.sock?.ev.off('messages.update', handler);
     });
   }
 
@@ -311,8 +367,11 @@ export default class ConfigWAEvents {
         );
 
         if (update.connection == 'connecting') {
-          this.wa.lastConnectionUpdateDate = Date.now();
-          this.wa.status = BotStatus.Offline;
+          // Usa StateManager através dos setters (type-safe)
+          if (this.stateManager) {
+            this.stateManager.setLastConnectionUpdateDate(Date.now());
+            this.stateManager.setStatus(BotStatus.Offline);
+          }
           this.wa.emit('connecting', { action: 'connecting' });
         }
 
@@ -327,71 +386,77 @@ export default class ConfigWAEvents {
         if (update.connection == 'open') {
           const uptime = Date.now();
 
-          this.wa.lastConnectionUpdateDate = uptime;
-          this.wa.status = BotStatus.Online;
-          
-          // Reseta o erro de desconexão quando conecta com sucesso
-          this.wa.lastDisconnectError = undefined;
+          // Usa StateManager através dos setters (type-safe)
+          if (this.stateManager) {
+            this.stateManager.setLastConnectionUpdateDate(uptime);
+            this.stateManager.setStatus(BotStatus.Online);
+            this.stateManager.setLastDisconnectError(undefined);
 
-          this.wa.id = fixID(this.wa.sock?.user?.id || '');
-          this.wa.phoneNumber = getPhoneNumber(this.wa.id);
-          this.wa.name =
-            this.wa.sock?.user?.name ||
-            this.wa.sock?.user?.notify ||
-            this.wa.sock?.user?.verifiedName ||
-            '';
-          this.wa.profileUrl = this.wa.sock?.user?.imgUrl || '';
+            const id = fixID(this.wa.sock?.user?.id || '');
+            this.stateManager.setId(id);
+            this.stateManager.setPhoneNumber(getPhoneNumber(id));
+            this.stateManager.setName(
+              this.wa.sock?.user?.name ||
+              this.wa.sock?.user?.notify ||
+              this.wa.sock?.user?.verifiedName ||
+              ''
+            );
+            this.stateManager.setProfileUrl(this.wa.sock?.user?.imgUrl || '');
 
-          this.wa.readUser(
-            { id: this.wa.id },
-            {
-              notify: this.wa.name || undefined,
-              imgUrl: this.wa.profileUrl || undefined,
-            },
-          );
-          this.wa.readChat(
-            { id: this.wa.id },
-            { subject: this.wa.name || undefined },
-          );
+            this.wa.readUser(
+              { id: this.stateManager.id },
+              {
+                notify: this.stateManager.name || undefined,
+                imgUrl: this.stateManager.profileUrl || undefined,
+              },
+            );
+            this.wa.readChat(
+              { id: this.stateManager.id },
+              { subject: this.stateManager.name || undefined },
+            );
+          }
 
           this.wa.emit('open', { isNewLogin: update.isNewLogin || false });
 
-          setTimeout(async () => {
-            try {
-              if (this.wa.lastConnectionUpdateDate != uptime) return;
+          // REMOVIDO: Auto-restart que estava causando reconexões desnecessárias
+          // O Baileys já gerencia a conexão automaticamente
+          // setTimeout(async () => {
+          //   try {
+          //     if (this.wa.lastConnectionUpdateDate != uptime) return;
+          //     await this.wa.reconnect(true, false);
+          //   } catch (error) {
+          //     this.wa.emit('error', error);
+          //   }
+          // }, this.wa.config.autoRestartInterval);
 
-              await this.wa.reconnect(true, false);
-            } catch (error) {
-              this.wa.emit('error', error);
-            }
-          }, this.wa.config.autoRestartInterval);
-
+          // Limpa interval anterior se existir
           if (this.wa.checkConnectionInterval !== null) {
             clearInterval(this.wa.checkConnectionInterval);
+            this.wa.checkConnectionInterval = null;
           }
 
-          this.wa.checkConnectionInterval = setInterval(() => {
-            if (!this.wa.sock) {
-              if (this.wa.checkConnectionInterval) {
-                clearInterval(this.wa.checkConnectionInterval);
-                this.wa.checkConnectionInterval = null;
-              }
-
-              return;
-            }
-
-            if (this.wa.sock.ws.isOpen) return;
-
-            this.wa.sock.ev.emit('connection.update', {
-              connection: 'close',
-              lastDisconnect: {
-                date: new Date(),
-                error: new Boom('Socket closed', {
-                  statusCode: DisconnectReason.connectionClosed,
-                }),
-              },
-            });
-          }, 10000);
+          // REMOVIDO: Interval que estava forçando desconexão após 10 segundos
+          // Isso estava causando o erro 402 após escanear o QR code
+          // O Baileys já gerencia a conexão e emite eventos de desconexão quando necessário
+          // this.wa.checkConnectionInterval = setInterval(() => {
+          //   if (!this.wa.sock) {
+          //     if (this.wa.checkConnectionInterval) {
+          //       clearInterval(this.wa.checkConnectionInterval);
+          //       this.wa.checkConnectionInterval = null;
+          //     }
+          //     return;
+          //   }
+          //   if (this.wa.sock.ws.isOpen) return;
+          //   this.wa.sock.ev.emit('connection.update', {
+          //     connection: 'close',
+          //     lastDisconnect: {
+          //       date: new Date(),
+          //       error: new Boom('Socket closed', {
+          //         statusCode: DisconnectReason.connectionClosed,
+          //       }),
+          //     },
+          //   });
+          // }, 10000);
 
           this.wa.eventsIsStoped = false;
 
@@ -399,51 +464,60 @@ export default class ConfigWAEvents {
         }
 
         if (update.connection == 'close') {
-          this.wa.lastConnectionUpdateDate = Date.now();
-          this.wa.status = BotStatus.Offline;
-
-          const status =
+            const status =
             (update.lastDisconnect?.error as Boom)?.output?.statusCode ||
             (typeof update.lastDisconnect?.error === 'number' 
               ? update.lastDisconnect.error 
               : undefined) ||
-            500;
+            ErrorCodes.INTERNAL_SERVER_ERROR;
           
-          // Rastreia o último erro de desconexão (só números)
-          this.wa.lastDisconnectError = typeof status === 'number' ? status : undefined;
+          // Usa StateManager através dos setters (type-safe)
+          if (this.stateManager) {
+            this.stateManager.setLastConnectionUpdateDate(Date.now());
+            this.stateManager.setStatus(BotStatus.Offline);
+            this.stateManager.setLastDisconnectError(typeof status === 'number' ? status : undefined);
+          }
 
           if (this.wa.checkConnectionInterval !== null) {
             clearInterval(this.wa.checkConnectionInterval);
             this.wa.checkConnectionInterval = null;
           }
 
-          if (status === DisconnectReason.loggedOut || status === 401 || status === 421) {
+          if (status === DisconnectReason.loggedOut || status === ErrorCodes.LOGGED_OUT || status === ErrorCodes.LOGGED_OUT_ALT) {
             // Erro 401/421: Logged Out - Sessão foi morta do WhatsApp
-            // Emite close com o código de erro para o cliente poder limpar as credenciais
+            // A limpeza da sessão é feita pelo ConnectionEventHandler
+            // Aqui apenas emite eventos para o cliente ser notificado
             this.wa.emit('close', { 
               reason: status, 
-              message: `Sessão desconectada do WhatsApp (${status}). Limpe a pasta de sessão e faça login novamente.` 
+              message: ErrorMessages.LOGGED_OUT(status)
             });
             this.wa.emit('stop', { isLogout: true });
-          } else if (status === 402) {
-            this.wa.emit('stop', { isLogout: false });
-          } else if (status === 428) {
+          } else if (status === ErrorCodes.CONNECTION_CLOSED) {
+            // 402 = connectionClosed - geralmente é temporário
+            // NÃO emite 'stop' para permitir que o Baileys gerencie a reconexão
+            // Apenas emite 'close' para notificar o cliente
+            this.wa.emit('close', {
+              reason: status,
+              message: ErrorMessages.CONNECTION_CLOSED
+            });
+          } else if (status === ErrorCodes.CONNECTION_TERMINATED) {
             // Erro 428: Connection Terminated - Sessão inválida/corrompida
             // (já rastreado acima)
             // NÃO tenta reconectar automaticamente - a sessão precisa ser limpa
             // Emite evento específico para que o usuário possa limpar a sessão
             this.wa.emit('close', { 
               reason: status, 
-              message: 'Connection Terminated (428) - Sessão inválida. Limpe a pasta de sessão e faça login novamente. Não será tentada reconexão automática.' 
+              message: ErrorMessages.CONNECTION_TERMINATED
             });
             // Para a reconexão automática - não adianta tentar com sessão inválida
             this.wa.emit('stop', { isLogout: false });
           } else if (status == DisconnectReason.restartRequired) {
-            // IMPORTANTE: Após autenticação (QR code),
-            // o WhatsApp força uma desconexão com restartRequired
-            // Salva as credenciais e reconecta com um novo socket
-            await this.wa.saveCreds(this.wa.sock.authState.creds);
-            await this.wa.reconnect(true, true);
+            // restartRequired é tratado pelo ConnectionEventHandler
+            // Apenas emite close para notificar (não trata aqui para evitar duplicação)
+            this.wa.emit('close', { 
+              reason: status, 
+              message: 'Reinício necessário após autenticação' 
+            });
           } else {
             this.wa.emit('close', { reason: status });
           }
@@ -457,7 +531,7 @@ export default class ConfigWAEvents {
   public configHistorySet() {
     const ignoreChats: string[] = [];
 
-    this.wa.sock.ev.on('messaging-history.set', async (update) => {
+    const handler = async (update: any) => {
       if (!this.wa.config.autoSyncHistory) return;
 
       for (const chat of update.chats || []) {
@@ -502,9 +576,9 @@ export default class ConfigWAEvents {
             ? this.wa.config.autoLoadGroupInfo
             : this.wa.config.autoLoadContactInfo;
 
-          if (autoLoad) {
+          if (autoLoad && chat.id) {
             // v7: tipo de chat.id permite null, mas já garantimos acima que existe
-            await this.wa.readChat({ id: chat.id! }, chat as any);
+            await this.wa.readChat({ id: chat.id }, chat);
           }
         } catch (err) {
           this.wa.emit('error', err);
@@ -516,7 +590,7 @@ export default class ConfigWAEvents {
           if (
             !message?.message ||
             !message.key?.remoteJid ||
-            message.key.remoteJid == 'status@broadcast'
+            message.key.remoteJid === JID_PATTERNS.BROADCAST
           )
             continue;
           if (ignoreChats.includes(fixID(message.key.remoteJid || '')))
@@ -538,11 +612,16 @@ export default class ConfigWAEvents {
           this.wa.emit('message', msg);
         }
       }
+    };
+    
+    this.wa.sock.ev.on('messaging-history.set', handler);
+    this.cleanupFunctions.push(() => {
+      this.wa.sock?.ev.off('messaging-history.set', handler);
     });
   }
 
   public configContactsUpdate() {
-    this.wa.sock.ev.on('contacts.update', async (updates) => {
+    const handler = async (updates: any) => {
       if (!this.wa.config.autoLoadContactInfo) return;
 
       for (const update of updates) {
@@ -556,11 +635,16 @@ export default class ConfigWAEvents {
           this.wa.emit('error', err);
         }
       }
+    };
+    
+    this.wa.sock.ev.on('contacts.update', handler);
+    this.cleanupFunctions.push(() => {
+      this.wa.sock?.ev.off('contacts.update', handler);
     });
   }
 
   public configContactsUpsert() {
-    this.wa.sock.ev.on('contacts.upsert', async (updates) => {
+    const handler = async (updates: any) => {
       if (!this.wa.config.autoLoadContactInfo) return;
 
       for (const update of updates) {
@@ -574,11 +658,16 @@ export default class ConfigWAEvents {
           this.wa.emit('error', err);
         }
       }
+    };
+    
+    this.wa.sock.ev.on('contacts.upsert', handler);
+    this.cleanupFunctions.push(() => {
+      this.wa.sock?.ev.off('contacts.upsert', handler);
     });
   }
 
   public configGroupsUpdate() {
-    this.wa.sock.ev.on('groups.update', async (updates) => {
+    const handler = async (updates: any) => {
       if (!this.wa.config.autoLoadGroupInfo) return;
 
       for (const update of updates) {
@@ -596,11 +685,16 @@ export default class ConfigWAEvents {
           this.wa.emit('error', err);
         }
       }
+    };
+    
+    this.wa.sock.ev.on('groups.update', handler);
+    this.cleanupFunctions.push(() => {
+      this.wa.sock?.ev.off('groups.update', handler);
     });
   }
 
   public configChatsDelete() {
-    this.wa.sock.ev.on('chats.delete', async (deletions) => {
+    const handler = async (deletions: any) => {
       for (const id of deletions) {
         try {
           await this.wa.removeChat(new Chat(id));
@@ -608,11 +702,16 @@ export default class ConfigWAEvents {
           this.wa.emit('error', err);
         }
       }
+    };
+    
+    this.wa.sock.ev.on('chats.delete', handler);
+    this.cleanupFunctions.push(() => {
+      this.wa.sock?.ev.off('chats.delete', handler);
     });
   }
 
   public configCall() {
-    this.wa.sock.ev.on('call', async (events: WACallEvent[]) => {
+    const handler = async (events: WACallEvent[]) => {
       for (const event of events || []) {
         try {
           const chat = event.chatId || event.groupJid || event.from || '';
@@ -652,6 +751,11 @@ export default class ConfigWAEvents {
           this.wa.emit('error', err);
         }
       }
+    };
+    
+    this.wa.sock.ev.on('call', handler);
+    this.cleanupFunctions.push(() => {
+      this.wa.sock?.ev.off('call', handler);
     });
   }
 }

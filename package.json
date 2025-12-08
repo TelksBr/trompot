@@ -8,6 +8,7 @@
     "example": "ts-node-dev example/index.ts",
     "cluster": "ts-node-dev example/cluster.ts",
     "telegram": "ts-node-dev example/telegram.ts",
+    "test": "ts-node example/test-refactoring.ts",
     "build": "npm i && npm run clean && tsc",
     "clean": "rimraf lib",
     "lint": "eslint ."
@@ -43,9 +44,7 @@
     "cluster": "0.7.7",
     "crypto-digest-sync": "1.0.0",
     "express": "5.2.1",
-    "link-preview-js": "3.0.0",
     "long": "5.2.3",
-    "music-metadata": "7.12.3",
     "node-cache": "5.1.2",
     "node-telegram-bot-api": "0.66.0",
     "pino": "9.7.0"
@@ -60,6 +59,7 @@
     "@types/express": "5.0.2",
     "@types/node": "^22.15.29",
     "@types/node-telegram-bot-api": "0.64.8",
+    "@types/qrcode": "^1.5.6",
     "@types/ws": "8.18.1",
     "dotenv": "16.5.0",
     "eslint": "^9.14.0",
@@ -68,6 +68,7 @@
     "globals": "16.2.0",
     "jimp": "^1.6.0",
     "prettier": "^3.3.3",
+    "qrcode": "^1.5.4",
     "rimraf": "^6.0.1",
     "sharp": "0.32.6",
     "ts-node-dev": "2.0.0",

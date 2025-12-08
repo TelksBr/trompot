@@ -14,6 +14,11 @@ Fork do projeto Rompot. Este repositório é mantido por TelksBr: https://github
 - [x] Tratamento de conexão
 - [x] Alta personalização
 - [x] Suporte a Cluster (Beta)
+- [x] Arquitetura modular e escalável
+- [x] Compatível com Baileys v7.0.0
+- [x] Reconexão automática inteligente
+- [x] Gerenciamento de estado centralizado
+- [x] Tratamento de erros robusto
 
 | Plataformas            | Whatsapp | Telegram (Beta) |
 | ----------------------- | -------- | --------------- |
@@ -47,6 +52,15 @@ const { Client, WhatsAppBot, TelegramBot } = require("trompot");
 
 ## WhatsApp
 
+### ✨ Novidades na Versão Refatorada
+
+A biblioteca foi completamente refatorada com uma arquitetura modular, melhorando:
+- **Compatibilidade**: Totalmente compatível com Baileys v7.0.0
+- **Performance**: Caches otimizados e gerenciamento de estado centralizado
+- **Confiabilidade**: Reconexão automática inteligente com retry e backoff exponencial
+- **Manutenibilidade**: Código modular e mais fácil de manter
+- **Logging**: Sistema de logs estruturado e configurável
+
 ### Conexão e Reconexão Automática
 
 O trompot gerencia automaticamente a reconexão com sessões existentes. Se você já autenticou uma vez, não precisará escanear o QR code novamente.
@@ -56,7 +70,16 @@ O trompot gerencia automaticamente a reconexão com sessões existentes. Se voc�
 ```ts
 import Client, { WhatsAppBot } from "trompot";
 
-const client = new Client(new WhatsAppBot());
+// Configuração do bot com opções avançadas
+const wbot = new WhatsAppBot({
+  autoSyncHistory: false,        // Sincronizar histórico automaticamente
+  useExperimentalServers: true,  // Usar servidores experimentais para mídia
+  autoLoadContactInfo: false,    // Carregar informações de contatos automaticamente
+  autoLoadGroupInfo: false,       // Carregar informações de grupos automaticamente
+  logLevel: 'info',              // Nível de log: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent'
+});
+
+const client = new Client(wbot);
 
 // Use sempre o mesmo caminho de sessão
 const SESSION_PATH = "./whatsapp-session";
@@ -81,6 +104,30 @@ client.on("open", (update) => {
   }
 });
 
+// Escuta erros de conexão
+client.on("close", (update) => {
+  console.log(`Conexão fechada. Motivo: ${update.reason}`);
+  
+  // Se for erro 401/421 (sessão morta), a biblioteca já limpou automaticamente
+  if (update.reason === 401 || update.reason === 421) {
+    console.log("⚠️ Sessão desconectada do WhatsApp.");
+    console.log("✅ A biblioteca já limpou TODA a sessão automaticamente (creds + todas as keys).");
+    console.log("🔄 Reconectando automaticamente em 2 segundos...");
+    
+    // Reconecta automaticamente após 2 segundos
+    // A biblioteca já limpou TUDO, então um novo QR code será gerado
+    setTimeout(async () => {
+      try {
+        await client.connect(SESSION_PATH);
+      } catch (error) {
+        console.error("❌ Erro ao reconectar:", error);
+      }
+    }, 2000);
+  } else if (update.reason === 428) {
+    console.error("❌ Erro 428: Sessão inválida. Não será tentada reconexão automática.");
+  }
+});
+
 // Conecta - se já houver sessão válida, reconecta automaticamente sem QR code
 await client.connect(SESSION_PATH);
 ```
@@ -89,14 +136,45 @@ await client.connect(SESSION_PATH);
 
 1. **Primeira vez**: Quando não há sessão, o Baileys gera um QR code. Escaneie com seu WhatsApp.
 2. **Próximas vezes**: Se a sessão estiver válida (`registered: true` no `creds.json`), o Baileys reconecta automaticamente **sem gerar QR code**.
-3. **Sessão expirada**: Se a sessão expirar ou for inválida, um novo QR code será gerado automaticamente.
+3. **Sessão expirada**: Se a sessão expirar ou for inválida (erros 401/421), a biblioteca:
+   - **Limpa automaticamente** toda a sessão (creds.json + todas as keys)
+   - **Gera um novo QR code** quando você chamar `connect()` novamente
+   - **O cliente não precisa fazer nada manualmente** - a biblioteca gerencia tudo
+4. **Reconexão inteligente**: O sistema tenta reconectar automaticamente com retry exponencial em caso de falhas temporárias.
+5. **Após escanear QR**: Quando você escaneia o QR code, o WhatsApp força uma desconexão (`restartRequired`). A biblioteca cria automaticamente um novo socket e finaliza a conexão corretamente.
+
+### Configurações Avançadas do WhatsAppBot
+
+```ts
+const wbot = new WhatsAppBot({
+  // Sincronização
+  autoSyncHistory: false,        // Sincronizar histórico de mensagens ao conectar
+  
+  // Carregamento automático
+  autoLoadContactInfo: false,    // Carregar informações de contatos automaticamente
+  autoLoadGroupInfo: false,      // Carregar informações de grupos automaticamente
+  
+  // Servidores
+  useExperimentalServers: false, // Usar servidores experimentais para download de mídia
+  
+  // Logging
+  logLevel: 'info',              // Nível de log: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent'
+  
+  // Outras opções do Baileys podem ser passadas aqui
+  qrTimeout: 60000,              // Timeout para QR code (60 segundos)
+  defaultQueryTimeoutMs: 10000,  // Timeout padrão para queries
+});
+```
 
 ### Dicas Importantes
 
 - ✅ **Use sempre o mesmo caminho de sessão** para manter a sessão
 - ✅ **Não delete a pasta de sessão** se quiser reconectar automaticamente
 - ✅ **O QR code só aparece** quando não há sessão válida ou quando a sessão expira
+- ✅ **Erros 401/421**: A biblioteca limpa automaticamente toda a sessão (creds + keys) e gera novo QR code
+- ✅ **Reconexão automática**: A biblioteca gerencia reconexões e limpeza de sessão - o cliente não precisa fazer nada manualmente
 - ❌ **Não mude o caminho de sessão** entre conexões se quiser reconexão automática
+- ⚠️ **Erro 428**: Indica sessão inválida, o sistema não tentará reconectar automaticamente
 
 
 ## Telegram (Beta)
@@ -113,6 +191,8 @@ client.on("open", () => {
 ```
 
 ## Configurações
+
+### Configuração do Client
 
 ```ts
 type ConnectionConfig = {
@@ -138,7 +218,32 @@ type ConnectionConfig = {
   maxTimeout: number;
 };
 
-client.config = config;
+const client = new Client(new WhatsAppBot(), config);
+```
+
+### Configuração do WhatsAppBot
+
+```ts
+const wbot = new WhatsAppBot({
+  // Sincronização e histórico
+  autoSyncHistory: false,        // Sincronizar histórico de mensagens ao conectar
+  
+  // Carregamento automático
+  autoLoadContactInfo: false,    // Carregar informações de contatos automaticamente
+  autoLoadGroupInfo: false,      // Carregar informações de grupos automaticamente
+  
+  // Servidores
+  useExperimentalServers: false, // Usar servidores experimentais para download de mídia
+  
+  // Logging (novo na versão refatorada)
+  logLevel: 'info',              // Nível de log: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent'
+  
+  // Outras opções do Baileys
+  qrTimeout: 60000,              // Timeout para QR code (60 segundos)
+  defaultQueryTimeoutMs: 10000,  // Timeout padrão para queries
+  retryRequestDelayMs: 500,      // Delay entre tentativas de retry
+  maxMsgRetryCount: 5,           // Máximo de tentativas de reenvio de mensagem
+});
 ```
 
 ## ⚙️ Criando comandos
@@ -175,6 +280,15 @@ client.on("open", (open) => {
 
 client.on("close", (update) => {
   console.info(`Cliente desconectou! Motivo: ${update.reason}`);
+  
+  // Tratamento de erros específicos
+  if (update.reason === 401 || update.reason === 421) {
+    console.warn("⚠️ Sessão desconectada do WhatsApp.");
+    console.info("✅ A biblioteca já limpou TODA a sessão automaticamente (creds + todas as keys).");
+    console.info("🔄 Chame connect() novamente para gerar um novo QR code.");
+  } else if (update.reason === 428) {
+    console.error("❌ Erro 428: Sessão inválida. Não será tentada reconexão automática.");
+  }
 });
 
 client.on("stop", (update) => {
@@ -507,6 +621,31 @@ client.demoteUserInChat(chat, user);
 ```ts
 client.rejectCall(call);
 ```
+
+## 🏗️ Arquitetura e Melhorias
+
+### Arquitetura Modular
+
+A biblioteca foi refatorada com uma arquitetura modular que separa responsabilidades:
+
+- **Serviços Base**: LoggerService, CacheService, ErrorHandler, RetryService, LIDMappingService
+- **Gerenciamento de Conexão**: ConnectionManager, SessionManager, StateManager
+- **Event Handlers**: Handlers especializados para cada tipo de evento (mensagens, conexão, grupos, etc.)
+
+### Compatibilidade Baileys v7.0.0
+
+A biblioteca é totalmente compatível com Baileys v7.0.0, incluindo:
+- Suporte a LIDs (Local Identifiers) e PNs (Phone Numbers)
+- Eventos obrigatórios (`messaging-history.set`, `lid-mapping.update`)
+- Protobufs usando `.create()` em vez de `.fromObject()`
+- Remoção de ACKs automáticos (conforme recomendação do Baileys)
+
+### Melhorias de Performance
+
+- Caches otimizados para metadata de grupos e chaves de sinal
+- Gerenciamento de estado centralizado
+- Reconexão automática com retry exponencial
+- Tratamento de erros robusto e estruturado
 
 ## Utilitários de Estado do App e Recursos de Negócio (WhatsAppBot)
 

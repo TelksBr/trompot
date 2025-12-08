@@ -178,6 +178,13 @@ export default class Client<Bot extends IBot = IBot>
       try {
         this.emit('close', update);
 
+        // Não reconecta automaticamente para erros 401, 421, 428, 402
+        // 401, 421, 428: Sessão precisa ser limpa manualmente
+        // 402: Baileys gerencia reconexão automaticamente, não precisamos interferir
+        if (update.reason === 401 || update.reason === 421 || update.reason === 428 || update.reason === 402) {
+          return;
+        }
+
         if (this.reconnectTimes < this.config.maxReconnectTimes) {
           this.reconnectTimes++;
 
@@ -269,6 +276,21 @@ export default class Client<Bot extends IBot = IBot>
   }
 
   public async stop(reason?: any) {
+    // Remove todos os listeners do bot para evitar vazamento de memória
+    // Os listeners são reconfigurados quando o bot é reconectado
+    this.bot.removeAllListeners('message');
+    this.bot.removeAllListeners('open');
+    this.bot.removeAllListeners('close');
+    this.bot.removeAllListeners('stop');
+    this.bot.removeAllListeners('connecting');
+    this.bot.removeAllListeners('reconnecting');
+    this.bot.removeAllListeners('qr');
+    this.bot.removeAllListeners('code');
+    this.bot.removeAllListeners('chat');
+    this.bot.removeAllListeners('user');
+    this.bot.removeAllListeners('call');
+    this.bot.removeAllListeners('error');
+    
     await this.bot.stop(reason);
   }
 
