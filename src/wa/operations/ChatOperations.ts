@@ -70,7 +70,7 @@ export class ChatOperations {
   /**
    * Obtém a foto de perfil de um chat
    */
-  async getChatProfile(chat: Chat, lowQuality?: boolean): Promise<Buffer | string> {
+  async getChatProfile(chat: Chat, lowQuality?: boolean): Promise<Buffer> {
     const uri = await this.getChatProfileUrl(chat, lowQuality);
     return await getImageURL(uri);
   }

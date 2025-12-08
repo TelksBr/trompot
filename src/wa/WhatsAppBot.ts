@@ -741,7 +741,7 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     return this.chatOperations.setChatDescription(chat, description);
   }
 
-  public async getChatProfile(chat: Chat, lowQuality?: boolean) {
+  public async getChatProfile(chat: Chat, lowQuality?: boolean): Promise<Buffer> {
     return this.chatOperations.getChatProfile(chat, lowQuality);
   }
 
@@ -845,7 +845,7 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     return this.userOperations.setUserDescription(user, description);
   }
 
-  public async getUserProfile(user: User, lowQuality?: boolean) {
+  public async getUserProfile(user: User, lowQuality?: boolean): Promise<Buffer> {
     return this.userOperations.getUserProfile(user, lowQuality);
   }
 
@@ -903,7 +903,7 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     await this.sock.updateProfileStatus(description);
   }
 
-  public async getBotProfile(lowQuality?: boolean) {
+  public async getBotProfile(lowQuality?: boolean): Promise<Buffer> {
     return await this.getUserProfile(new User(this.id), lowQuality);
   }
 
@@ -1024,7 +1024,15 @@ export default class WhatsAppBot extends BotEvents implements IBot {
   }
 
   /** Baixa a stream de mídia de uma mensagem */
-  public async downloadStreamMessage(media: MediaMessage): Promise<Buffer> {
-    return this.messageOperations.downloadStreamMessage(media);
+  public async downloadStreamMessage(media: Media): Promise<Buffer> {
+    // A interface IBot espera Media, mas internamente precisamos de MediaMessage
+    // MediaMessage estende Message e tem chat e id necessários
+    if (media instanceof MediaMessage) {
+      return this.messageOperations.downloadStreamMessage(media);
+    }
+    // Se não for MediaMessage, tenta converter
+    // Mas Media é apenas { stream: any }, então não temos chat/id
+    // Por compatibilidade, assumimos que se passou Media, é na verdade MediaMessage
+    throw new Error('downloadStreamMessage requer MediaMessage com chat e id válidos');
   }
 }

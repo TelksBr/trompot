@@ -47,7 +47,7 @@ export class UserOperations {
   /**
    * Obtém a foto de perfil de um usuário
    */
-  async getUserProfile(user: User, lowQuality?: boolean): Promise<Buffer | string> {
+  async getUserProfile(user: User, lowQuality?: boolean): Promise<Buffer> {
     const uri = await this.getUserProfileUrl(user, lowQuality);
     return await getImageURL(uri);
   }
