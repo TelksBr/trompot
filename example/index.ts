@@ -39,10 +39,6 @@ client.on('qr', (qr: string) => {
   console.info('QR Gerado:', qr);
 });
 
-client.on('code', (code: string) => {
-  console.info('Código de pareamento gerado:', code);
-});
-
 client.on('connecting', () => {
   console.info('Tentando conectar cliente...');
 });
@@ -190,10 +186,5 @@ client.on('error', (err: any) => {
   client.addQuickResponse(quickResponse3);
   client.addQuickResponse(quickResponse4);
 
-  //? Ao inserir o número do bot é ativado o pareamento por código
-  const botPhoneNumber = '';
-
-  await client.connect(
-    new MultiFileAuthState('./example/sessions/whatsapp', botPhoneNumber),
-  );
+  await client.connect('./example/sessions/whatsapp');
 })();

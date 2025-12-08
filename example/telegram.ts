@@ -34,9 +34,6 @@ client.on('qr', (qr: string) => {
   console.info('QR Gerado:', qr);
 });
 
-client.on('code', (code: string) => {
-  console.info('Código de pareamento gerado:', code);
-});
 
 client.on('connecting', () => {
   console.info('Tentando conectar cliente...');

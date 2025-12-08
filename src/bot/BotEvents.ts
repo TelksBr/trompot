@@ -29,6 +29,8 @@ export type BotEventsMap = {
   close: {
     /** Motivo da desconeção */
     reason: any;
+    /** Mensagem adicional sobre o motivo (opcional) */
+    message?: string;
   };
   /** Ocorre quando um código QR é gerado para autenticação. */
   qr: string;

@@ -134,14 +134,25 @@ export const getBaileysAuth = async (
 
           await Promise.all(
             ids.map(async (id) => {
-              let value = await replacer(await auth.get(`${type}-${id}`));
+              try {
+                // v7.0.0: Suporta todas as chaves do SignalDataTypeMap
+                // Incluindo: lid-mapping, device-list, tctoken, etc.
+                let value = await replacer(await auth.get(`${type}-${id}`));
 
-              if (type === 'app-state-sync-key' && value) {
-                // v7.0.0-rc.5: Usar create em vez de fromObject
-                value = proto.Message.AppStateSyncKeyData.create(value);
+                // Tratamento especial para app-state-sync-key (v7.0.0)
+                if (type === 'app-state-sync-key' && value) {
+                  // v7.0.0: Usar create em vez de fromObject
+                  value = proto.Message.AppStateSyncKeyData.create(value);
+                }
+
+                // Se value for null/undefined, não atribui (Baileys espera isso)
+                if (value !== null && value !== undefined) {
+                  data[id] = value;
+                }
+              } catch (err) {
+                // Se houver erro ao buscar, não atribui nada
+                // Isso é esperado para chaves que não existem ainda (Baileys v7)
               }
-
-              data[id] = value;
             }),
           );
 

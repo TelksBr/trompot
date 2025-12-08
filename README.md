@@ -47,42 +47,57 @@ const { Client, WhatsAppBot, TelegramBot } = require("trompot");
 
 ## WhatsApp
 
-Após iniciar o bot um QR Code será emprimido no terminal, escane-o com seu WhatsApp para gerar uma nova conexão entre seu número e o Client. Essa conexão será guardada em `./path-to-auth`, para gerar uma nova delete-o ou se conecte com um novo caminho de sessão.
+### Conexão e Reconexão Automática
+
+O trompot gerencia automaticamente a reconexão com sessões existentes. Se você já autenticou uma vez, não precisará escanear o QR code novamente.
+
+**IMPORTANTE:** Use sempre o **mesmo caminho de sessão** para que a reconexão automática funcione.
 
 ```ts
-const client = new Client(new WhatsAppBot());
-client.connect("./path-to-auth");
+import Client, { WhatsAppBot } from "trompot";
 
-// Exibe o QR code no terminal (padrão Baileys)
+const client = new Client(new WhatsAppBot());
+
+// Use sempre o mesmo caminho de sessão
+const SESSION_PATH = "./whatsapp-session";
+
+// Escuta o QR code (só será emitido se não houver sessão válida)
 client.on("qr", async (qr) => {
   try {
     const QRCode = (await import("qrcode")).default;
+    console.log("Escaneie o QR code com seu WhatsApp:");
     console.log(await QRCode.toString(qr, { type: "terminal" }));
   } catch (err) {
-    console.log("QRCode:", qr);
+    console.log("QR Code:", qr);
   }
 });
-```
 
-## Parear código
-
-Necessita passar um método de autenticação personalizado incluindo o número do bot a ser conectado.
-
-```ts
-import Client, { WhatsAppBot, MultiFileAuthState } from "trompot";
-
-const client = new Client(new WhatsAppBot());
-
-client.on("code", (code) => {
-  console.info("Código de pareamento gerado:", code);
+// Escuta quando conecta (pode ser reconexão automática ou novo login)
+client.on("open", (update) => {
+  if (update.isNewLogin) {
+    console.log("✅ Novo login realizado!");
+  } else {
+    console.log("✅ Reconectado automaticamente com sessão existente!");
+  }
 });
 
-const botPhoneNumber = "5511991234567";
-
-const auth = new MultiFileAuthState("./path-to-auth", botPhoneNumber));
-
-await client.connect(auth);
+// Conecta - se já houver sessão válida, reconecta automaticamente sem QR code
+await client.connect(SESSION_PATH);
 ```
+
+### Como Funciona a Reconexão Automática
+
+1. **Primeira vez**: Quando não há sessão, o Baileys gera um QR code. Escaneie com seu WhatsApp.
+2. **Próximas vezes**: Se a sessão estiver válida (`registered: true` no `creds.json`), o Baileys reconecta automaticamente **sem gerar QR code**.
+3. **Sessão expirada**: Se a sessão expirar ou for inválida, um novo QR code será gerado automaticamente.
+
+### Dicas Importantes
+
+- ✅ **Use sempre o mesmo caminho de sessão** para manter a sessão
+- ✅ **Não delete a pasta de sessão** se quiser reconectar automaticamente
+- ✅ **O QR code só aparece** quando não há sessão válida ou quando a sessão expira
+- ❌ **Não mude o caminho de sessão** entre conexões se quiser reconexão automática
+
 
 ## Telegram (Beta)
 

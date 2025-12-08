@@ -1,6 +1,6 @@
 {
   "name": "trompot",
-  "version": "1.5.0",
+  "version": "1.6.1",
   "description": "Chatbot API multi-plataforma em TypeScript. Fork do Trompot.",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

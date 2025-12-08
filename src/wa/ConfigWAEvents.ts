@@ -302,6 +302,8 @@ export default class ConfigWAEvents {
   }
 
   public configConnectionUpdate() {
+    // CRÍTICO: Configurar o listener ANTES de qualquer outra coisa
+    // O Baileys pode emitir o QR code no primeiro connection.update
     this.wa.sock.ev.on('connection.update', async (update) => {
       try {
         this.wa.connectionListeners = this.wa.connectionListeners.filter(
@@ -314,7 +316,11 @@ export default class ConfigWAEvents {
           this.wa.emit('connecting', { action: 'connecting' });
         }
 
+        // IMPORTANTE: O Baileys envia o QR code como string no campo 'qr' do connection.update
+        // O QR code será emitido como texto através do evento 'qr'
         if (update.qr) {
+          // Emite o QR code (string) para o cliente
+          // O QR code pode ser atualizado várias vezes, então emitimos sempre que houver
           this.wa.emit('qr', update.qr);
         }
 
@@ -323,6 +329,9 @@ export default class ConfigWAEvents {
 
           this.wa.lastConnectionUpdateDate = uptime;
           this.wa.status = BotStatus.Online;
+          
+          // Reseta o erro de desconexão quando conecta com sucesso
+          this.wa.lastDisconnectError = undefined;
 
           this.wa.id = fixID(this.wa.sock?.user?.id || '');
           this.wa.phoneNumber = getPhoneNumber(this.wa.id);
@@ -395,19 +404,44 @@ export default class ConfigWAEvents {
 
           const status =
             (update.lastDisconnect?.error as Boom)?.output?.statusCode ||
-            update.lastDisconnect?.error ||
+            (typeof update.lastDisconnect?.error === 'number' 
+              ? update.lastDisconnect.error 
+              : undefined) ||
             500;
+          
+          // Rastreia o último erro de desconexão (só números)
+          this.wa.lastDisconnectError = typeof status === 'number' ? status : undefined;
 
           if (this.wa.checkConnectionInterval !== null) {
             clearInterval(this.wa.checkConnectionInterval);
             this.wa.checkConnectionInterval = null;
           }
 
-          if (status === DisconnectReason.loggedOut) {
+          if (status === DisconnectReason.loggedOut || status === 401 || status === 421) {
+            // Erro 401/421: Logged Out - Sessão foi morta do WhatsApp
+            // Emite close com o código de erro para o cliente poder limpar as credenciais
+            this.wa.emit('close', { 
+              reason: status, 
+              message: `Sessão desconectada do WhatsApp (${status}). Limpe a pasta de sessão e faça login novamente.` 
+            });
             this.wa.emit('stop', { isLogout: true });
           } else if (status === 402) {
             this.wa.emit('stop', { isLogout: false });
+          } else if (status === 428) {
+            // Erro 428: Connection Terminated - Sessão inválida/corrompida
+            // (já rastreado acima)
+            // NÃO tenta reconectar automaticamente - a sessão precisa ser limpa
+            // Emite evento específico para que o usuário possa limpar a sessão
+            this.wa.emit('close', { 
+              reason: status, 
+              message: 'Connection Terminated (428) - Sessão inválida. Limpe a pasta de sessão e faça login novamente. Não será tentada reconexão automática.' 
+            });
+            // Para a reconexão automática - não adianta tentar com sessão inválida
+            this.wa.emit('stop', { isLogout: false });
           } else if (status == DisconnectReason.restartRequired) {
+            // IMPORTANTE: Após autenticação (QR code),
+            // o WhatsApp força uma desconexão com restartRequired
+            // Salva as credenciais e reconecta com um novo socket
             await this.wa.saveCreds(this.wa.sock.authState.creds);
             await this.wa.reconnect(true, true);
           } else {

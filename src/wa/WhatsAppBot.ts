@@ -100,6 +100,7 @@ export default class WhatsAppBot extends BotEvents implements IBot {
   public name: string = '';
   public profileUrl: string = '';
   public lastConnectionUpdateDate: number = Date.now();
+  public lastDisconnectError?: number; // Rastreia o último erro de desconexão
 
   public checkConnectionInterval: NodeJS.Timeout | null = null;
   public configEvents: ConfigWAEvents = new ConfigWAEvents(this);
@@ -227,12 +228,7 @@ export default class WhatsAppBot extends BotEvents implements IBot {
           }
           // Você pode emitir eventos ou processar syncType conforme necessário
         });
-        // Listener padrão Baileys: emite evento 'qr' para o client externo
-        this.sock.ev.on('connection.update', (update) => {
-          if (update.qr) {
-            this.emit('qr', update.qr);
-          }
-        });
+        // QR code é emitido pelo ConfigWAEvents
         // Para exibir o QR code no terminal, utilize:
         //
         // client.on('qr', async (qr) => {
@@ -254,24 +250,11 @@ export default class WhatsAppBot extends BotEvents implements IBot {
       this.auth = auth;
     }
 
-    if (!this.auth.botPhoneNumber) {
-      await this.internalConnect({ browser: Browsers.windows('Rompot') });
-    } else {
-      await this.internalConnect({
-        browser: ['Chrome (linux)', 'Rompot', '22.5.0'],
-      });
-
-      if (!this.sock?.authState?.creds?.registered) {
-        await this.sock.waitForConnectionUpdate(async (update) => Promise.resolve(!!update.qr));
-
-        const code = await this.sock.requestPairingCode(
-          this.auth.botPhoneNumber,
-        );
-
-        this.emit('code', code);
-      }
-    }
-
+    // Fluxo simplificado: apenas QR code
+    // O Baileys gerencia automaticamente a reconexão com sessões existentes
+    await this.internalConnect({ 
+      browser: Browsers.windows('Rompot')
+    });
     await this.awaitConnectionState('open');
   }
 
@@ -294,21 +277,23 @@ export default class WhatsAppBot extends BotEvents implements IBot {
             // v7.0.0-rc.5: Configuração básica de auth
             // LIDs serão implementados quando estiverem disponíveis na API estável
           },
-          ...additionalOptions,
           ...this.config,
+          ...additionalOptions, // additionalOptions por último para sobrescrever config padrão
         });
 
         this.store.bind(this.sock.ev);
 
+        // CRÍTICO: Configura eventos IMEDIATAMENTE após criar o socket
+        // O Baileys pode emitir o QR code no primeiro connection.update
+        // Se o listener não estiver configurado, perdemos o QR code
         this.configEvents.configureAll();
 
-        resolve();
-
-        await this.awaitConnectionState('open');
-
         this.sock.ev.on('creds.update', saveCreds);
+
+        resolve();
       } catch (err) {
         this.ev.emit('error', err);
+        reject(err);
       }
     });
   }
@@ -321,6 +306,16 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     stopEvents: boolean = false,
     showOpen?: boolean,
   ): Promise<void> {
+    // Se o último erro foi 428, não tenta reconectar - sessão está inválida
+    if (this.lastDisconnectError === 428) {
+      this.emit('close', {
+        reason: 428,
+        message: 'Reconexão cancelada: Erro 428 detectado. Limpe a pasta de sessão e faça login novamente.',
+      });
+      this.emit('stop', { isLogout: false });
+      return;
+    }
+
     if (stopEvents) {
       this.eventsIsStoped = true;
 
@@ -342,8 +337,14 @@ export default class WhatsAppBot extends BotEvents implements IBot {
             state = 'connecting';
             status =
               (update.lastDisconnect?.error as Boom)?.output?.statusCode ||
-              (update.lastDisconnect?.error as any) ||
+              (typeof update.lastDisconnect?.error === 'number'
+                ? update.lastDisconnect.error
+                : undefined) ||
               DisconnectReason.connectionClosed;
+            
+            // Rastreia o erro para evitar reconexões futuras se for 428 (só números)
+            this.lastDisconnectError = typeof status === 'number' ? status : undefined;
+            
             retryCount++;
           } else {
             this.eventsIsStoped = false;
@@ -363,8 +364,13 @@ export default class WhatsAppBot extends BotEvents implements IBot {
           state = 'connecting';
           status =
             (update.lastDisconnect?.error as Boom)?.output?.statusCode ||
-            (update.lastDisconnect?.error as any) ||
+            (typeof update.lastDisconnect?.error === 'number'
+              ? update.lastDisconnect.error
+              : undefined) ||
             DisconnectReason.connectionClosed;
+          
+          // Rastreia o erro (só números)
+          this.lastDisconnectError = typeof status === 'number' ? status : undefined;
         } else if (state == 'connecting') {
           state = 'open';
         } else if (state == 'open' && showOpen) {
@@ -377,6 +383,10 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     }
 
     await this.stop();
+
+    // Delay antes de reconectar para evitar loops infinitos
+    // Especialmente importante para erros como 428 (Connection Terminated)
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     this.emit('reconnecting', {});
 
