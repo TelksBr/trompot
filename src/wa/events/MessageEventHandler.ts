@@ -1,5 +1,5 @@
 import { WASocket, MessageUpsertType, proto } from '@whiskeysockets/baileys';
-import { LoggerService } from '../services/LoggerService';
+import { ILoggerService } from '../interfaces/ILoggerService';
 import ConvertWAMessage from '../ConvertWAMessage';
 import ErrorMessage from '../../messages/ErrorMessage';
 import { fixID } from '../ID';
@@ -14,9 +14,9 @@ import { ConfigDefaults, TIMESTAMP_MULTIPLIER } from '../constants/ConfigDefault
 
 export class MessageEventHandler {
   private bot: WhatsAppBot;
-  private logger: LoggerService;
+  private logger: ILoggerService;
 
-  constructor(bot: WhatsAppBot, logger: LoggerService) {
+  constructor(bot: WhatsAppBot, logger: ILoggerService) {
     this.bot = bot;
     this.logger = logger;
   }

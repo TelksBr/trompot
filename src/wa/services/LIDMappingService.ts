@@ -1,6 +1,6 @@
 import { WASocket } from '@whiskeysockets/baileys';
-import { LoggerService } from './LoggerService';
-import { CacheService } from './CacheService';
+import { ILoggerService } from '../interfaces/ILoggerService';
+import { ICacheService } from '../interfaces/ICacheService';
 
 export interface LIDMapping {
   lid: string;
@@ -9,11 +9,11 @@ export interface LIDMapping {
 
 export class LIDMappingService {
   private socket: WASocket | null = null;
-  private logger: LoggerService;
-  private cache: CacheService;
+  private logger: ILoggerService;
+  private cache: ICacheService;
   private cacheKey = 'lid-mapping';
 
-  constructor(logger: LoggerService, cache: CacheService) {
+  constructor(logger: ILoggerService, cache: ICacheService) {
     this.logger = logger;
     this.cache = cache;
   }

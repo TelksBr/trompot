@@ -1,8 +1,9 @@
 import pino, { Logger } from 'pino';
+import { ILoggerService } from '../interfaces/ILoggerService';
 
 export type LogLevel = 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
 
-export class LoggerService {
+export class LoggerService implements ILoggerService {
   private logger: Logger;
   private level: LogLevel;
 

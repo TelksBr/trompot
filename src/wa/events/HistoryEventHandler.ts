@@ -1,5 +1,5 @@
 import { WASocket, proto } from '@whiskeysockets/baileys';
-import { LoggerService } from '../services/LoggerService';
+import { ILoggerService } from '../interfaces/ILoggerService';
 import ConvertWAMessage from '../ConvertWAMessage';
 import ErrorMessage from '../../messages/ErrorMessage';
 import { fixID } from '../ID';
@@ -12,9 +12,9 @@ import Chat from '../../modules/chat/Chat';
  */
 export class HistoryEventHandler {
   private bot: WhatsAppBot;
-  private logger: LoggerService;
+  private logger: ILoggerService;
 
-  constructor(bot: WhatsAppBot, logger: LoggerService) {
+  constructor(bot: WhatsAppBot, logger: ILoggerService) {
     this.bot = bot;
     this.logger = logger;
   }

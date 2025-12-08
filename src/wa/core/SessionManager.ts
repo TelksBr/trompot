@@ -1,18 +1,13 @@
 import { AuthenticationCreds, initAuthCreds } from '@whiskeysockets/baileys';
 import IAuth from '../../client/IAuth';
 import { getBaileysAuth } from '../Auth';
-import { LoggerService } from '../services/LoggerService';
+import { ILoggerService } from '../interfaces/ILoggerService';
+import { ISessionManager, SessionValidationResult } from '../interfaces/ISessionManager';
 
-export interface SessionValidationResult {
-  isValid: boolean;
-  shouldGenerateQR: boolean;
-  reason?: string;
-}
+export class SessionManager implements ISessionManager {
+  private logger: ILoggerService;
 
-export class SessionManager {
-  private logger: LoggerService;
-
-  constructor(logger: LoggerService) {
+  constructor(logger: ILoggerService) {
     this.logger = logger;
   }
 
@@ -136,7 +131,7 @@ export class SessionManager {
   /**
    * Carrega credenciais
    */
-  async loadCredentials(auth: IAuth): Promise<AuthenticationCreds> {
+  async loadCredentials(auth: IAuth): Promise<AuthenticationCreds | null> {
     try {
       const { state } = await getBaileysAuth(auth);
       return state.creds;

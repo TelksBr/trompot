@@ -1,4 +1,5 @@
-import { LoggerService } from '../services/LoggerService';
+import { ILoggerService } from '../interfaces/ILoggerService';
+import { IErrorHandler } from '../interfaces/IErrorHandler';
 import { ErrorHandler } from '../services/ErrorHandler';
 import ErrorMessage from '../../messages/ErrorMessage';
 import { fixID } from '../ID';
@@ -13,7 +14,7 @@ export class ErrorUtils {
   static handleHandlerError(
     error: unknown,
     context: string,
-    logger: LoggerService,
+    logger: ILoggerService,
     bot: { emit: (event: string, data: any) => void }
   ): void {
     const errorHandler = new ErrorHandler(logger);
@@ -27,7 +28,7 @@ export class ErrorUtils {
   static handleMessageError(
     error: unknown,
     remoteJid: string | undefined | null,
-    logger?: LoggerService
+    logger?: ILoggerService
   ): ErrorMessage {
     if (logger) {
       logger.error('Erro ao processar mensagem', error);
@@ -49,7 +50,7 @@ export class ErrorUtils {
   static async safeExecute<T>(
     fn: () => Promise<T>,
     context: string,
-    logger: LoggerService,
+    logger: ILoggerService,
     bot: { emit: (event: string, data: any) => void },
     onError?: (error: unknown) => void
   ): Promise<T | undefined> {
@@ -70,7 +71,7 @@ export class ErrorUtils {
   static safeExecuteSync<T>(
     fn: () => T,
     context: string,
-    logger: LoggerService,
+    logger: ILoggerService,
     bot: { emit: (event: string, data: any) => void },
     onError?: (error: unknown) => void
   ): T | undefined {

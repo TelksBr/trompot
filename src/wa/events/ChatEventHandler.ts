@@ -1,13 +1,13 @@
 import { WASocket } from '@whiskeysockets/baileys';
-import { LoggerService } from '../services/LoggerService';
+import { ILoggerService } from '../interfaces/ILoggerService';
 import Chat from '../../modules/chat/Chat';
 import WhatsAppBot from '../WhatsAppBot';
 
 export class ChatEventHandler {
   private bot: WhatsAppBot;
-  private logger: LoggerService;
+  private logger: ILoggerService;
 
-  constructor(bot: WhatsAppBot, logger: LoggerService) {
+  constructor(bot: WhatsAppBot, logger: ILoggerService) {
     this.bot = bot;
     this.logger = logger;
   }

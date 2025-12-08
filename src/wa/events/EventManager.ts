@@ -1,15 +1,15 @@
 import { WASocket, ConnectionState, BaileysEventMap } from '@whiskeysockets/baileys';
-import { LoggerService } from '../services/LoggerService';
+import { ILoggerService } from '../interfaces/ILoggerService';
 
 type EventHandler<T = any> = (data: T) => void | Promise<void>;
 
 export class EventManager {
   private socket: WASocket | null = null;
   private listeners: Map<string, Set<EventHandler>> = new Map();
-  private logger: LoggerService;
+  private logger: ILoggerService;
   private cleanupFunctions: (() => void)[] = [];
 
-  constructor(logger: LoggerService) {
+  constructor(logger: ILoggerService) {
     this.logger = logger;
   }
 

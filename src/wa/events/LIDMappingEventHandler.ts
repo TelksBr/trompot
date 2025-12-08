@@ -1,5 +1,5 @@
 import { WASocket } from '@whiskeysockets/baileys';
-import { LoggerService } from '../services/LoggerService';
+import { ILoggerService } from '../interfaces/ILoggerService';
 import { LIDMappingService, LIDMapping } from '../services/LIDMappingService';
 import WhatsAppBot from '../WhatsAppBot';
 
@@ -8,12 +8,12 @@ import WhatsAppBot from '../WhatsAppBot';
  */
 export class LIDMappingEventHandler {
   private bot: WhatsAppBot;
-  private logger: LoggerService;
+  private logger: ILoggerService;
   private lidMappingService: LIDMappingService;
 
   constructor(
     bot: WhatsAppBot,
-    logger: LoggerService,
+    logger: ILoggerService,
     lidMappingService: LIDMappingService
   ) {
     this.bot = bot;

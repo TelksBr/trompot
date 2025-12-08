@@ -1,9 +1,10 @@
-import { LoggerService } from './LoggerService';
+import { ILoggerService } from '../interfaces/ILoggerService';
+import { IErrorHandler } from '../interfaces/IErrorHandler';
 
-export class ErrorHandler {
-  private logger: LoggerService;
+export class ErrorHandler implements IErrorHandler {
+  private logger: ILoggerService;
 
-  constructor(logger: LoggerService) {
+  constructor(logger: ILoggerService) {
     this.logger = logger;
   }
 

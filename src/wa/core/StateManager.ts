@@ -1,22 +1,9 @@
 import { BotStatus } from '../../bot/BotStatus';
 import { ConnectionState } from '@whiskeysockets/baileys';
-import { LoggerService } from '../services/LoggerService';
+import { ILoggerService } from '../interfaces/ILoggerService';
+import { IStateManager, BotState, ConnectionStatus } from '../interfaces/IStateManager';
 
-export type ConnectionStatus = 'disconnected' | 'connecting' | 'authenticating' | 'connected' | 'reconnecting';
-
-export interface BotState {
-  id: string;
-  status: BotStatus;
-  phoneNumber: string;
-  name: string;
-  profileUrl: string;
-  connectionStatus: ConnectionStatus;
-  lastConnectionUpdateDate: number;
-  lastDisconnectError?: number;
-  connectionState?: Partial<ConnectionState>;
-}
-
-export class StateManager {
+export class StateManager implements IStateManager {
   private state: BotState = {
     id: '',
     status: BotStatus.Offline,
@@ -28,9 +15,9 @@ export class StateManager {
   };
 
   private observers: Set<(state: BotState) => void> = new Set();
-  private logger?: LoggerService;
+  private logger?: ILoggerService;
 
-  constructor(logger?: LoggerService) {
+  constructor(logger?: ILoggerService) {
     this.logger = logger;
   }
 

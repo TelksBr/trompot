@@ -1,12 +1,13 @@
 import NodeCache from 'node-cache';
-import { LoggerService } from './LoggerService';
+import { ILoggerService } from '../interfaces/ILoggerService';
+import { ICacheService } from '../interfaces/ICacheService';
 
-export class CacheService {
+export class CacheService implements ICacheService {
   private caches: Map<string, NodeCache> = new Map();
-  private logger: LoggerService;
+  private logger: ILoggerService;
   private defaultTTL: number = 3600; // 1 hora
 
-  constructor(logger: LoggerService) {
+  constructor(logger: ILoggerService) {
     this.logger = logger;
   }
 

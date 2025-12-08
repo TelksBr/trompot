@@ -1,21 +1,22 @@
 import { WASocket, ConnectionState, DisconnectReason, makeWASocket, SocketConfig } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
-import { StateManager, ConnectionStatus } from './StateManager';
-import { SessionManager } from './SessionManager';
+import { IStateManager, ConnectionStatus } from '../interfaces/IStateManager';
+import { ISessionManager } from '../interfaces/ISessionManager';
 import { RetryService } from '../services/RetryService';
-import { ErrorHandler } from '../services/ErrorHandler';
-import { LoggerService } from '../services/LoggerService';
+import { IErrorHandler } from '../interfaces/IErrorHandler';
+import { ILoggerService } from '../interfaces/ILoggerService';
+import { IConnectionManager } from '../interfaces/IConnectionManager';
 import { ErrorCodes } from '../constants/ErrorCodes';
 import { Timeouts } from '../constants/Timeouts';
 
-export class ConnectionManager {
+export class ConnectionManager implements IConnectionManager {
   private socket: WASocket | null = null;
   private status: ConnectionStatus = 'disconnected';
-  private stateManager: StateManager;
-  private sessionManager: SessionManager;
+  private stateManager: IStateManager;
+  private sessionManager: ISessionManager;
   private retryService: RetryService;
-  private errorHandler: ErrorHandler;
-  private logger: LoggerService;
+  private errorHandler: IErrorHandler;
+  private logger: ILoggerService;
   
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
@@ -23,11 +24,11 @@ export class ConnectionManager {
   public connectionConfig: SocketConfig | null = null; // Tornado público para acesso em createSocket
 
   constructor(
-    stateManager: StateManager,
-    sessionManager: SessionManager,
+    stateManager: IStateManager,
+    sessionManager: ISessionManager,
     retryService: RetryService,
-    errorHandler: ErrorHandler,
-    logger: LoggerService
+    errorHandler: IErrorHandler,
+    logger: ILoggerService
   ) {
     this.stateManager = stateManager;
     this.sessionManager = sessionManager;

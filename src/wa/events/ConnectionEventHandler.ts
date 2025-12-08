@@ -1,21 +1,21 @@
 import { WASocket, ConnectionState } from '@whiskeysockets/baileys';
-import { LoggerService } from '../services/LoggerService';
-import { StateManager } from '../core/StateManager';
-import { SessionManager } from '../core/SessionManager';
+import { ILoggerService } from '../interfaces/ILoggerService';
+import { IStateManager } from '../interfaces/IStateManager';
+import { ISessionManager } from '../interfaces/ISessionManager';
 import WhatsAppBot from '../WhatsAppBot';
 import { ErrorCodes, ErrorMessages } from '../constants/ErrorCodes';
 
 export class ConnectionEventHandler {
   private bot: WhatsAppBot;
-  private logger: LoggerService;
-  private stateManager: StateManager;
-  private sessionManager: SessionManager;
+  private logger: ILoggerService;
+  private stateManager: IStateManager;
+  private sessionManager: ISessionManager;
 
   constructor(
     bot: WhatsAppBot,
-    logger: LoggerService,
-    stateManager: StateManager,
-    sessionManager: SessionManager
+    logger: ILoggerService,
+    stateManager: IStateManager,
+    sessionManager: ISessionManager
   ) {
     this.bot = bot;
     this.logger = logger;
