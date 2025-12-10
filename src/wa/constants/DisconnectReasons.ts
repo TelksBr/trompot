@@ -17,11 +17,13 @@ export const DisconnectReasons = {
 
 /**
  * Códigos que indicam que não deve tentar reconectar
+ * NOTA: 428 (CONNECTION_TERMINATED) foi removido - é um erro temporário que permite reconexão
+ * Apenas 401/421 indicam sessão realmente inválida (token expirado)
  */
 export const NON_RECONNECTABLE_ERRORS = [
-  DisconnectReasons.LOGGED_OUT,
-  DisconnectReasons.LOGGED_OUT_ALT,
-  DisconnectReasons.CONNECTION_TERMINATED,
+  DisconnectReasons.LOGGED_OUT, // 401 - Token expirado
+  DisconnectReasons.LOGGED_OUT_ALT, // 421 - Token expirado (alternativo)
+  // 428 removido - não é sessão inválida, apenas erro temporário de conexão
 ] as const;
 
 /**

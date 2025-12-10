@@ -1,6 +1,8 @@
+import { Contact } from '@whiskeysockets/baileys';
 import User from '../../modules/user/User';
 import { getImageURL, verifyIsEquals } from '../../utils/Generic';
 import { getPhoneNumber } from '../ID';
+import { JID_PATTERNS } from '../constants/JIDPatterns';
 import WhatsAppBot from '../WhatsAppBot';
 
 /**
@@ -151,6 +153,94 @@ export class UserOperations {
   async unblockUser(user: User): Promise<void> {
     if (user.id === this.bot.id) return;
     await this.bot.sock.updateBlockStatus(user.id, 'unblock');
+  }
+
+  /**
+   * Lê o usuário e atualiza suas informações
+   */
+  async readUser(user: Partial<User>, metadata?: Partial<Contact>): Promise<void> {
+    try {
+      if (!user.id || !user.id.includes(JID_PATTERNS.USER)) return;
+      
+      // Valida se socket está disponível (mas não exige conexão completa para leitura)
+      if (!this.bot.sock) {
+        return;
+      }
+
+      if (metadata?.imgUrl) {
+        user.profileUrl = await this.getUserProfileUrl(new User(user.id));
+      } else {
+        const userData = await this.getUser(new User(user.id || ''));
+
+        if (userData == null || !userData.profileUrl) {
+          user.profileUrl = await this.getUserProfileUrl(new User(user.id));
+        }
+      }
+
+      if (metadata?.notify || metadata?.verifiedName) {
+        user.name = metadata?.notify || metadata?.verifiedName;
+      }
+
+      if (metadata?.name) {
+        user.savedName = metadata.name;
+      }
+
+      user.name = user.name || user.savedName;
+
+      await this.updateUser({ id: user.id || '', ...user });
+    } catch (err) {
+      this.bot.emit('error', err);
+    }
+  }
+
+  /**
+   * Obtém o nome do bot
+   */
+  async getBotName(): Promise<string> {
+    return (await this.getUser(new User(this.bot.id)))?.name || '';
+  }
+
+  /**
+   * Define o nome do bot
+   */
+  async setBotName(name: string): Promise<void> {
+    await this.bot.sock.updateProfileName(name);
+  }
+
+  /**
+   * Obtém a descrição do bot
+   */
+  async getBotDescription(): Promise<string> {
+    // O método fetchStatus não existe na API pública do Baileys
+    throw new Error('getBotDescription não implementado: fetchStatus não disponível na API do Baileys');
+  }
+
+  /**
+   * Define a descrição do bot
+   */
+  async setBotDescription(description: string): Promise<void> {
+    await this.bot.sock.updateProfileStatus(description);
+  }
+
+  /**
+   * Obtém a foto de perfil do bot
+   */
+  async getBotProfile(lowQuality?: boolean): Promise<Buffer> {
+    return await this.getUserProfile(new User(this.bot.id), lowQuality);
+  }
+
+  /**
+   * Obtém a URL da foto de perfil do bot
+   */
+  async getBotProfileUrl(lowQuality?: boolean): Promise<string> {
+    return (await this.getUserProfileUrl(new User(this.bot.id), lowQuality)) || '';
+  }
+
+  /**
+   * Define a foto de perfil do bot
+   */
+  async setBotProfile(image: Buffer): Promise<void> {
+    await this.bot.sock.updateProfilePicture(this.bot.id, image);
   }
 }
 

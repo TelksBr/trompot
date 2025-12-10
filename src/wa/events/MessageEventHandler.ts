@@ -1,4 +1,4 @@
-import { WASocket, MessageUpsertType, proto } from '@whiskeysockets/baileys';
+import { WASocket, MessageUpsertType, proto, isJidGroup } from '@whiskeysockets/baileys';
 import { ILoggerService } from '../interfaces/ILoggerService';
 import ConvertWAMessage from '../ConvertWAMessage';
 import ErrorMessage from '../../messages/ErrorMessage';
@@ -39,23 +39,23 @@ export class MessageEventHandler {
     socket.ev.on('messages.update', async (messages) => {
       await ErrorUtils.safeExecute(
         async () => {
-          for (const message of messages || []) {
-            try {
+        for (const message of messages || []) {
+          try {
               if (!message.key || message.key.remoteJid === JID_PATTERNS.BROADCAST) return;
 
-              await this.readMessages([{ key: message.key, ...message.update }]);
+            await this.readMessages([{ key: message.key, ...message.update }]);
 
-              if (!message?.update?.status) return;
+            if (!message?.update?.status) return;
 
-              const msg = await new ConvertWAMessage(this.bot, message).get();
-              msg.isUpdate = true;
-              this.bot.emit('message', msg);
-            } catch (err) {
+            const msg = await new ConvertWAMessage(this.bot, message).get();
+            msg.isUpdate = true;
+            this.bot.emit('message', msg);
+          } catch (err) {
               // Erro individual em mensagem não deve parar o processamento
               const errorMsg = ErrorUtils.handleMessageError(err, message?.key?.remoteJid, this.logger);
               this.bot.emit('message', errorMsg);
-            }
           }
+        }
         },
         'MessageEventHandler.messages.update',
         this.logger,
@@ -136,8 +136,8 @@ export class MessageEventHandler {
           this.bot.addMessageCache(key.id!);
 
           const chatId = fixID(key.remoteJid || this.bot.id);
-          const chat = await this.bot.getChat(new Chat(chatId));
 
+          // Calcula timestamp sem bloquear
           let timestamp: number | undefined;
           if (message.messageTimestamp) {
             if (Long.isLong(message.messageTimestamp)) {
@@ -147,16 +147,18 @@ export class MessageEventHandler {
             }
           }
 
-          await this.bot.updateChat({
-            id: chatId,
-            unreadCount: (chat?.unreadCount || 0) + 1,
-            timestamp,
-            name:
-              key.id?.includes(JID_PATTERNS.USER) && !key.fromMe
-                ? message.pushName || message.verifiedBizName || undefined
-                : undefined,
-          });
+          // Converte mensagem PRIMEIRO - isso é o mais importante
+          const msg = await new ConvertWAMessage(
+            this.bot,
+            message as any,
+            type,
+          ).get();
 
+          // Emite a mensagem IMEDIATAMENTE - sem bloqueios
+          this.bot.emit('message', msg);
+
+          // Atualiza cache em background (opcional - não bloqueia)
+          // Esses dados são apenas para cache, não são necessários para processar a mensagem
           const userId = fixID(
             key.fromMe
               ? this.bot.id
@@ -166,22 +168,87 @@ export class MessageEventHandler {
                   '',
           );
 
-          await this.bot.updateUser({
-            id: userId,
-            name: message.pushName || message.verifiedBizName || undefined,
+          // Atualiza cache diretamente sem passar por getChat/getUser
+          // Isso evita chamadas bloqueantes ao funcHandler
+          // Esses dados são apenas para cache - não são necessários para processar a mensagem
+          Promise.allSettled([
+            // Atualiza chat diretamente no cache sem buscar primeiro
+            this.bot.auth.get(`chats-${chatId}`)
+              .then((chatData: any) => {
+                const currentUnreadCount = chatData?.unreadCount || 0;
+                const newChat = {
+                  ...(chatData || {}),
+                  id: chatId,
+                  unreadCount: currentUnreadCount + 1,
+                  timestamp: timestamp || chatData?.timestamp,
+                  name: chatData?.name || (
+                    key.id?.includes(JID_PATTERNS.USER) && !key.fromMe
+                      ? message.pushName || message.verifiedBizName || undefined
+                      : undefined
+                  ),
+                  type: isJidGroup(chatId) ? ChatType.Group : ChatType.PV,
+                };
+                return this.bot.auth.set(`chats-${chatId}`, newChat);
+              })
+              .catch(() => {
+                // Se não existir, cria novo
+                const newChat = {
+                  id: chatId,
+                  unreadCount: 1,
+                  timestamp,
+                  name:
+                    key.id?.includes(JID_PATTERNS.USER) && !key.fromMe
+                      ? message.pushName || message.verifiedBizName || undefined
+                      : undefined,
+                  type: isJidGroup(chatId) ? ChatType.Group : ChatType.PV,
+                };
+                return this.bot.auth.set(`chats-${chatId}`, newChat);
+              }),
+            // Atualiza user diretamente no cache sem buscar primeiro
+            this.bot.auth.get(`users-${userId}`)
+              .then((userData: any) => {
+                const newUser = {
+                  ...(userData || {}),
+                  id: userId,
+                  name: userData?.name || message.pushName || message.verifiedBizName || undefined,
+                };
+                return this.bot.auth.set(`users-${userId}`, newUser);
+              })
+              .catch(() => {
+                // Se não existir, cria novo
+                const newUser = {
+                  id: userId,
+                  name: message.pushName || message.verifiedBizName || undefined,
+                };
+                return this.bot.auth.set(`users-${userId}`, newUser);
+              }),
+          ]).catch(() => {
+            // Ignora erros - não é crítico
           });
 
-          const msg = await new ConvertWAMessage(
-            this.bot,
-            message as any,
-            type,
-          ).get();
-
           if (msg.fromMe && msg.isUnofficial) {
-            await this.bot.updateChat({ id: msg.chat.id, unreadCount: 0 });
+            // Também em background
+            this.bot.updateChat({ id: msg.chat.id, unreadCount: 0 }).catch(() => {
+              // Ignora erros
+            });
           }
 
-          this.bot.emit('message', msg);
+          // Retorna para não emitir mensagem duplicada
+          return;
+
+          // Log de debug para verificar se mensagens estão sendo emitidas
+          this.logger.debug(
+            {
+              chatId: msg.chat.id,
+              messageId: msg.id,
+              type: msg.type,
+              fromMe: msg.fromMe,
+              isOld: msg.isOld,
+            },
+            'Emitindo mensagem do WhatsAppBot'
+          );
+
+          // Mensagem já foi emitida acima - não emitir novamente
         } catch (err) {
           // Erro individual em mensagem não deve parar o processamento
           const errorMsg = ErrorUtils.handleMessageError(err, message?.key?.remoteJid, this.logger);

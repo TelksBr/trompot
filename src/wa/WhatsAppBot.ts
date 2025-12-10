@@ -56,6 +56,8 @@ import { CacheService } from './services/CacheService';
 import { ErrorHandler } from './services/ErrorHandler';
 import { RetryService } from './services/RetryService';
 import { LIDMappingService } from './services/LIDMappingService';
+import { PendingMessageQueue } from './services/PendingMessageQueue';
+import { LIDNormalizationService } from './services/LIDNormalizationService';
 import { StateManager } from './core/StateManager';
 import { ConnectionManager } from './core/ConnectionManager';
 import { SessionManager } from './core/SessionManager';
@@ -92,6 +94,8 @@ export type WhatsAppBotConfig = Partial<SocketConfig> & {
   autoLoadContactInfo: boolean;
   /** Auto carrega informações de contatos */
   autoLoadGroupInfo: boolean;
+  /** Rejeita automaticamente todas as chamadas recebidas */
+  autoRejectCalls?: boolean;
   /** Nível de log */
   logLevel?: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
 };
@@ -127,9 +131,11 @@ export default class WhatsAppBot extends BotEvents implements IBot {
   private cacheService: CacheService;
   private errorHandler: ErrorHandler;
   private retryService: RetryService;
-  private lidMappingService: LIDMappingService;
+  public lidMappingService: LIDMappingService;
+  public lidNormalizationService: LIDNormalizationService;
+  public pendingMessageQueue: PendingMessageQueue;
   private stateManager: StateManager;
-  private connectionManager: ConnectionManager;
+  public connectionManager: ConnectionManager; // Tornado público para permitir reconexão em erros
   private sessionManager: SessionManager;
   private eventManager: EventManager;
   
@@ -188,13 +194,15 @@ export default class WhatsAppBot extends BotEvents implements IBot {
 
     // Valida e normaliza configuração
     const validatedConfig = ConfigValidator.validateWithWarnings(config);
-    
+
     // Inicializa serviços
     this.loggerService = new LoggerService(validatedConfig.logLevel || 'info');
     this.cacheService = new CacheService(this.loggerService);
     this.errorHandler = new ErrorHandler(this.loggerService);
     this.retryService = new RetryService();
     this.lidMappingService = new LIDMappingService(this.loggerService, this.cacheService);
+    this.lidNormalizationService = new LIDNormalizationService(this.loggerService, this.lidMappingService);
+    this.pendingMessageQueue = new PendingMessageQueue(this.loggerService);
     this.stateManager = new StateManager(this.loggerService);
     this.sessionManager = new SessionManager(this.loggerService);
     this.connectionManager = new ConnectionManager(
@@ -222,11 +230,12 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     this.lidMappingEventHandler = new LIDMappingEventHandler(
       this,
       this.loggerService,
-      this.lidMappingService
+      this.lidMappingService,
+      this.pendingMessageQueue
     );
 
     // Inicializa operações especializadas
-    this.messageOperations = new MessageOperations(this, this.errorHandler);
+    this.messageOperations = new MessageOperations(this, this.errorHandler, this.pendingMessageQueue);
     this.chatOperations = new ChatOperations(this);
     this.userOperations = new UserOperations(this);
     this.groupOperations = new GroupOperations(this);
@@ -257,6 +266,7 @@ export default class WhatsAppBot extends BotEvents implements IBot {
       autoSyncHistory: validatedConfig.autoSyncHistory,
       autoLoadContactInfo: validatedConfig.autoLoadContactInfo,
       autoLoadGroupInfo: validatedConfig.autoLoadGroupInfo,
+      autoRejectCalls: validatedConfig.autoRejectCalls,
       shouldIgnoreJid: () => false,
       // v7.0.0-rc.5: Removido ACKs automáticos para evitar banimentos
       generateHighQualityLinkPreview: false,
@@ -340,13 +350,20 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     const { state, saveCreds } = await getBaileysAuth(this.auth);
     this.saveCreds = saveCreds;
 
+    // Cria logger para o Baileys (filtra logs de sessão se logLevel for 'warn' ou superior)
+    // O Baileys usa este logger para logs internos, incluindo "Closing session"
+    const baileysLogger = this.config.logger || pino({ 
+      level: this.config.logLevel === 'info' ? 'warn' : this.config.logLevel || 'warn' 
+    });
+
     // Cria configuração do socket
     const socketConfig: SocketConfig = {
       auth: {
         creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, this.config.logger),
+        keys: makeCacheableSignalKeyStore(state.keys, baileysLogger),
       },
       browser: Browsers.windows('Rompot'),
+      logger: baileysLogger, // Passa logger explicitamente para o Baileys
       ...this.config,
     } as SocketConfig;
 
@@ -372,10 +389,18 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     this.store.bind(this.sock.ev);
     this.eventManager.setSocket(this.sock);
     this.lidMappingService.setSocket(this.sock);
+    this.lidNormalizationService.setSocket(this.sock);
 
     // Configura handlers (CRÍTICO: antes de qualquer evento)
     this.configEvents.configureAll();
     this.setupEventHandlers();
+
+    // Configura limpeza periódica da fila de mensagens pendentes (a cada 30 segundos)
+    if (this.pendingMessageQueue) {
+      setInterval(() => {
+        this.pendingMessageQueue.cleanup();
+      }, 30000);
+    }
 
     // Configura creds.update
     this.sock.ev.on('creds.update', saveCreds);
@@ -411,15 +436,9 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     showOpen?: boolean,
     force: boolean = false,
   ): Promise<void> {
-    // Se o último erro foi 428, não tenta reconectar - sessão está inválida
-    if (this.lastDisconnectError === ErrorCodes.CONNECTION_TERMINATED) {
-      this.emit('close', {
-        reason: ErrorCodes.CONNECTION_TERMINATED,
-        message: ErrorMessages.RECONNECTION_CANCELLED(ErrorCodes.CONNECTION_TERMINATED),
-      });
-      this.emit('stop', { isLogout: false });
-      return;
-    }
+    // 428 foi removido da lista de erros não reconectáveis
+    // É um erro temporário que permite reconexão
+    // Apenas 401/421 (token expirado) impedem reconexão
 
     // Se já estiver conectado, não precisa reconectar
     if (this.sock?.ws.isOpen) {
@@ -428,11 +447,21 @@ export default class WhatsAppBot extends BotEvents implements IBot {
 
     // Se force=true (vindo de restartRequired após QR code), sempre reconecta
     // Caso contrário, verifica se está aguardando QR code inicial
+    // IMPORTANTE: Não impede reconexão se for restartRequired (código 515)
+    // O restartRequired acontece após escanear QR code e precisa reconectar imediatamente
     if (!force && this.sock && !this.sock.ws.isOpen) {
-      // Verifica se há QR code pendente - se sim, não reconecta
-      // Mas permite se for restartRequired (force=true)
-      this.loggerService.warn('Aguardando autenticação (QR code). Não reconectando para evitar limpar sessão.');
-      return;
+      // Verifica se o último erro foi restartRequired (515) - se sim, permite reconexão
+      const isRestartRequired = this.lastDisconnectError === DisconnectReason.restartRequired;
+      
+      if (!isRestartRequired) {
+        // Verifica se há QR code pendente - se sim, não reconecta
+        // Mas permite se for restartRequired
+        this.loggerService.warn('Aguardando autenticação (QR code). Não reconectando para evitar limpar sessão.');
+        return;
+      }
+      // Se for restartRequired, continua e reconecta (force será true implicitamente)
+      this.loggerService.info('RestartRequired detectado (após QR code). Reconectando...');
+      force = true; // Força reconexão para restartRequired
     }
 
     // Limpa socket anterior se existir (sem desconectar explicitamente)
@@ -543,138 +572,16 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     chat: Partial<Chat>,
     metadata?: Partial<GroupMetadata> & Partial<BaileysChat>,
     updateMetadata: boolean = true,
-  ) {
-    try {
-      // Valida JID usando utilitário
-      if (!chat.id || !isValidJID(chat.id)) {
-        return;
-      }
-      
-      // Valida se socket está disponível (mas não exige conexão completa para leitura)
-      if (!this.sock) {
-        return;
-      }
-
-      chat.type = isJidGroup(chat.id) ? ChatType.Group : ChatType.PV;
-
-      if (chat.type == ChatType.Group) {
-        if (updateMetadata) {
-          chat.profileUrl =
-            (await this.getChatProfileUrl(new Chat(chat.id))) || undefined;
-
-          if (!metadata) {
-            try {
-              metadata = await this.sock.groupMetadata(chat.id);
-            } catch {}
-          } else if (!metadata.participants) {
-            try {
-              metadata = {
-                ...metadata,
-                ...(await this.sock.groupMetadata(chat.id)),
-              };
-            } catch {}
-
-            if (metadata.participant) {
-              metadata.participants = [
-                ...(metadata.participants || []),
-                ...metadata.participant.map((p) => {
-                  return {
-                    id: p.userJid,
-                    isSuperAdmin:
-                      p.rank == proto.GroupParticipant.Rank.SUPERADMIN,
-                    isAdmin: p.rank == proto.GroupParticipant.Rank.ADMIN,
-                  } as any;
-                }),
-              ];
-            }
-          }
-        }
-
-        if (metadata?.participants) {
-          chat.users = [];
-          chat.admins = [];
-
-          for (const p of metadata.participants) {
-            chat.users.push(p.id);
-
-            if (p.admin == 'admin' || p.isAdmin) {
-              chat.admins.push(`${p.id}`);
-            } else if (p.isSuperAdmin) {
-              chat.leader = p.id;
-
-              chat.admins.push(`${p.id}`);
-            }
-          }
-        }
-
-        if (metadata?.subjectOwner) {
-          chat.leader = metadata.subjectOwner;
-        }
-      }
-
-      if (metadata?.subject || metadata?.name) {
-        chat.name = metadata.subject || metadata.name || undefined;
-      }
-
-      if (metadata?.desc || metadata?.description) {
-        chat.description = metadata.desc || metadata.description || undefined;
-      }
-
-      if (metadata?.unreadCount) {
-        chat.unreadCount = metadata.unreadCount || undefined;
-      }
-
-      if (metadata?.conversationTimestamp) {
-        if (Long.isLong(metadata.conversationTimestamp)) {
-          chat.timestamp = metadata.conversationTimestamp.toNumber() * TIMESTAMP_MULTIPLIER;
-        } else {
-          chat.timestamp = Number(metadata.conversationTimestamp) * TIMESTAMP_MULTIPLIER;
-        }
-      }
-
-      if (chat.id) {
-        await this.updateChat({ id: chat.id, ...chat });
-      }
-    } catch {}
+  ): Promise<void> {
+    return this.chatOperations.readChat(chat, metadata, updateMetadata);
   }
 
   /**
    * * Lê o usuário
    * @param user Usuário
    */
-  public async readUser(user: Partial<User>, metadata?: Partial<Contact>) {
-    try {
-      if (!user.id || !user.id.includes(JID_PATTERNS.USER)) return;
-      
-      // Valida se socket está disponível (mas não exige conexão completa para leitura)
-      if (!this.sock) {
-        return;
-      }
-
-      if (metadata?.imgUrl) {
-        user.profileUrl = await this.getUserProfileUrl(new User(user.id));
-      } else {
-        const userData = await this.getUser(new User(user.id || ''));
-
-        if (userData == null || !userData.profileUrl) {
-          user.profileUrl = await this.getUserProfileUrl(new User(user.id));
-        }
-      }
-
-      if (metadata?.notify || metadata?.verifiedName) {
-        user.name = metadata?.notify || metadata?.verifiedName;
-      }
-
-      if (metadata?.name) {
-        user.savedName = metadata.name;
-      }
-
-      user.name = user.name || user.savedName;
-
-      await this.updateUser({ id: user.id || '', ...user });
-    } catch (err) {
-      this.emit('error', err);
-    }
+  public async readUser(user: Partial<User>, metadata?: Partial<Contact>): Promise<void> {
+    return this.userOperations.readUser(user, metadata);
   }
 
   /**
@@ -685,16 +592,7 @@ export default class WhatsAppBot extends BotEvents implements IBot {
   public async getPollMessage(
     pollMessageId: string,
   ): Promise<PollMessage | PollUpdateMessage> {
-    const pollMessage = await this.auth.get(`polls-${pollMessageId}`);
-
-    if (!pollMessage || !PollMessage.isValid(pollMessage))
-      return PollMessage.fromJSON({ id: pollMessageId });
-
-    if (pollMessage.type == MessageType.PollUpdate) {
-      return PollUpdateMessage.fromJSON(pollMessage);
-    }
-
-    return PollMessage.fromJSON(pollMessage);
+    return this.messageOperations.getPollMessage(pollMessageId);
   }
 
   /**
@@ -704,7 +602,7 @@ export default class WhatsAppBot extends BotEvents implements IBot {
   public async savePollMessage(
     pollMessage: PollMessage | PollUpdateMessage,
   ): Promise<void> {
-    await this.auth.set(`polls-${pollMessage.id}`, pollMessage.toJSON());
+    return this.messageOperations.savePollMessage(pollMessage);
   }
 
   /**
@@ -887,32 +785,32 @@ export default class WhatsAppBot extends BotEvents implements IBot {
 
   //! ******************************** BOT ********************************
 
-  public async getBotName() {
-    return await this.getUserName(new User(this.id));
+  public async getBotName(): Promise<string> {
+    return this.userOperations.getBotName();
   }
 
-  public async setBotName(name: string) {
-    await this.sock.updateProfileName(name);
+  public async setBotName(name: string): Promise<void> {
+    return this.userOperations.setBotName(name);
   }
 
-  public async getBotDescription() {
-    return await this.getUserDescription(new User(this.id));
+  public async getBotDescription(): Promise<string> {
+    return this.userOperations.getBotDescription();
   }
 
-  public async setBotDescription(description: string) {
-    await this.sock.updateProfileStatus(description);
+  public async setBotDescription(description: string): Promise<void> {
+    return this.userOperations.setBotDescription(description);
   }
 
   public async getBotProfile(lowQuality?: boolean): Promise<Buffer> {
-    return await this.getUserProfile(new User(this.id), lowQuality);
+    return this.userOperations.getBotProfile(lowQuality);
   }
 
-  public async getBotProfileUrl(lowQuality?: boolean) {
-    return (await this.getUserProfileUrl(new User(this.id), lowQuality)) || '';
+  public async getBotProfileUrl(lowQuality?: boolean): Promise<string> {
+    return this.userOperations.getBotProfileUrl(lowQuality);
   }
 
-  public async setBotProfile(image: Buffer) {
-    await this.sock.updateProfilePicture(this.id, image);
+  public async setBotProfile(image: Buffer): Promise<void> {
+    return this.userOperations.setBotProfile(image);
   }
 
   //! ******************************* MESSAGE *******************************
@@ -1026,13 +924,13 @@ export default class WhatsAppBot extends BotEvents implements IBot {
   /** Baixa a stream de mídia de uma mensagem */
   public async downloadStreamMessage(media: Media): Promise<Buffer> {
     // A interface IBot espera Media, mas internamente precisamos de MediaMessage
-    // MediaMessage estende Message e tem chat e id necessários
+    // MediaMessage estende Message e tem chat e id necessários para carregar do store
+    // Na prática, sempre será passado MediaMessage, então fazemos type assertion
     if (media instanceof MediaMessage) {
       return this.messageOperations.downloadStreamMessage(media);
     }
-    // Se não for MediaMessage, tenta converter
-    // Mas Media é apenas { stream: any }, então não temos chat/id
-    // Por compatibilidade, assumimos que se passou Media, é na verdade MediaMessage
-    throw new Error('downloadStreamMessage requer MediaMessage com chat e id válidos');
+    // Se não for MediaMessage, tenta usar como MediaMessage (compatibilidade)
+    // Isso permite que código que passa MediaMessage funcione
+    return this.messageOperations.downloadStreamMessage(media as unknown as MediaMessage);
   }
 }

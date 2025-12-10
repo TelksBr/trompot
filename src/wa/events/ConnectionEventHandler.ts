@@ -86,22 +86,39 @@ export class ConnectionEventHandler {
       this.stateManager.setConnectionStatus('connected');
 
       // Atualiza informações do bot
-      if (this.bot.sock?.user) {
-        try {
-          const { fixID, getPhoneNumber } = require('../ID');
+      // Tenta obter ID de múltiplas fontes (sock.user.id pode não estar disponível imediatamente)
+      try {
+        const { fixID, getPhoneNumber } = require('../ID');
+        
+        // 1. Tenta sock.user.id
+        // 2. Tenta creds.me.id (das credenciais, mais confiável)
+        let rawId = this.bot.sock?.user?.id || '';
+        
+        // Se não encontrou, tenta das credenciais
+        if (!rawId && this.bot.sock?.authState?.creds?.me?.id) {
+          rawId = this.bot.sock.authState.creds.me.id;
+        }
+        
+        if (rawId) {
+          const id = fixID(rawId);
+          this.stateManager.setId(id);
           
-          this.stateManager.setId(fixID(this.bot.sock.user.id || ''));
-          this.stateManager.setPhoneNumber(getPhoneNumber(this.stateManager.id));
+          // Obtém o número de telefone do ID original (antes do fixID) ou do ID fixado
+          // Tenta primeiro do ID original, depois do fixado
+          const phoneNumber = getPhoneNumber(rawId) || getPhoneNumber(id);
+          this.stateManager.setPhoneNumber(phoneNumber);
+          
           this.stateManager.setName(
-            this.bot.sock.user.name ||
-            this.bot.sock.user.notify ||
-            this.bot.sock.user.verifiedName ||
+            this.bot.sock?.user?.name ||
+            this.bot.sock?.user?.notify ||
+            this.bot.sock?.user?.verifiedName ||
+            this.bot.sock?.authState?.creds?.me?.name ||
             ''
           );
-          this.stateManager.setProfileUrl(this.bot.sock.user.imgUrl || '');
-        } catch (error) {
-          this.logger.error('Erro ao atualizar informações do bot', error);
+          this.stateManager.setProfileUrl(this.bot.sock?.user?.imgUrl || '');
         }
+      } catch (error) {
+        this.logger.error('Erro ao atualizar informações do bot', error);
       }
 
       // Lê informações do usuário e chat (pode falhar silenciosamente)
@@ -202,12 +219,42 @@ export class ConnectionEventHandler {
         message: ErrorMessages.CONNECTION_CLOSED
       });
       // NÃO emite 'stop' para 402 - permite que o Baileys tente reconectar
+    } else if (status === ErrorCodes.REQUEST_TIMEOUT) {
+      // 408 = Request Timeout - requisição expirou, geralmente temporário
+      // Similar ao 402 (Connection Closed) - não limpa sessão, permite reconexão
+      this.bot.emit('close', {
+        reason: status,
+        message: ErrorMessages.REQUEST_TIMEOUT
+      });
+      // NÃO emite 'stop' para 408 - permite que o Baileys tente reconectar
     } else if (status === ErrorCodes.CONNECTION_TERMINATED) {
       this.bot.emit('close', {
         reason: status,
         message: ErrorMessages.CONNECTION_TERMINATED
       });
       this.bot.emit('stop', { isLogout: false });
+    } else if (status === ErrorCodes.INTERNAL_SERVER_ERROR) {
+      // 500 = Internal Server Error - erro temporário do servidor, permite reconexão
+      this.bot.emit('close', {
+        reason: status,
+        message: ErrorMessages.INTERNAL_SERVER_ERROR_MSG
+      });
+      // NÃO emite 'stop' para 500 - permite que o ConnectionManager tente reconectar
+      // Chama ConnectionManager.handleDisconnect para tentar reconectar automaticamente
+      // O handleDisconnect verifica shouldReconnect e tenta reconectar se necessário
+      try {
+        const { Boom } = require('@hapi/boom');
+        const error = new Boom('Internal Server Error', { 
+          statusCode: 500,
+          output: { statusCode: 500 }
+        });
+        // Chama ConnectionManager.handleDisconnect para tentar reconectar automaticamente
+        if (this.bot.connectionManager && typeof this.bot.connectionManager.handleDisconnect === 'function') {
+          await this.bot.connectionManager.handleDisconnect(error);
+        }
+      } catch (error) {
+        this.logger.error('Erro ao tentar reconectar após erro 500', error);
+      }
     } else if (status === DisconnectReason.restartRequired) {
       // Após autenticação (QR code escaneado), o WhatsApp força restartRequired
       // Salva credenciais e cria novo socket imediatamente
@@ -229,9 +276,41 @@ export class ConnectionEventHandler {
 
   /**
    * Trata atualizações de credenciais
+   * Atualiza informações do bot quando credenciais são atualizadas
+   * Isso garante que o número seja obtido mesmo se sock.user.id não estiver disponível imediatamente
    */
   private async handleCredsUpdate(creds: any): Promise<void> {
     await this.bot.saveCreds(creds);
+    
+    // Atualiza informações do bot se credenciais contiverem me.id
+    if (creds?.me?.id) {
+      try {
+        const { fixID, getPhoneNumber } = require('../ID');
+        const rawId = creds.me.id;
+        const id = fixID(rawId);
+        
+        // Atualiza apenas se ainda não tiver ID ou se o ID mudou
+        if (!this.stateManager.id || this.stateManager.id !== id) {
+          this.stateManager.setId(id);
+          // Obtém o número de telefone do ID original (antes do fixID) ou do ID fixado
+          const phoneNumber = getPhoneNumber(rawId) || getPhoneNumber(id);
+          this.stateManager.setPhoneNumber(phoneNumber);
+        } else if (!this.stateManager.phoneNumber) {
+          // Se já tem ID mas não tem número, tenta obter novamente
+          const phoneNumber = getPhoneNumber(rawId) || getPhoneNumber(this.stateManager.id);
+          if (phoneNumber) {
+            this.stateManager.setPhoneNumber(phoneNumber);
+          }
+        }
+        
+        // Atualiza nome se disponível nas credenciais e ainda não tiver
+        if (creds.me?.name && !this.stateManager.name) {
+          this.stateManager.setName(creds.me.name);
+        }
+      } catch (error) {
+        this.logger.error('Erro ao atualizar informações do bot em creds.update', error);
+      }
+    }
   }
 }
 

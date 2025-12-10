@@ -21,6 +21,7 @@ export class ConfigValidator {
       useExperimentalServers: config?.useExperimentalServers ?? false,
       autoLoadContactInfo: config?.autoLoadContactInfo ?? false,
       autoLoadGroupInfo: config?.autoLoadGroupInfo ?? false,
+      autoRejectCalls: config?.autoRejectCalls ?? false,
       logLevel: config?.logLevel ?? 'info',
       ...config,
     };

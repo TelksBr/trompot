@@ -4,7 +4,7 @@ import {
 import { Boom } from '@hapi/boom';
 
 import { BotStatus } from '../bot/BotStatus';
-import { fixID } from './ID';
+import { fixID, getPhoneNumber } from './ID';
 import WhatsAppBot from './WhatsAppBot';
 import { StateManager } from './core/StateManager';
 import { ErrorCodes, ErrorMessages } from './constants/ErrorCodes';
@@ -197,13 +197,29 @@ export default class ConfigWAEvents {
             this.stateManager.setStatus(BotStatus.Online);
             this.stateManager.setLastDisconnectError(undefined);
 
-            const id = fixID(this.wa.sock?.user?.id || '');
+            // Tenta obter ID de múltiplas fontes (sock.user.id pode não estar disponível imediatamente)
+            // 1. Tenta sock.user.id
+            // 2. Tenta creds.me.id (das credenciais, mais confiável)
+            let rawId = this.wa.sock?.user?.id || '';
+            
+            // Se não encontrou, tenta das credenciais
+            if (!rawId && this.wa.sock?.authState?.creds?.me?.id) {
+              rawId = this.wa.sock.authState.creds.me.id;
+            }
+            
+            const id = fixID(rawId);
             this.stateManager.setId(id);
-            this.stateManager.setPhoneNumber(getPhoneNumber(id));
+            
+            // Obtém o número de telefone do ID original (antes do fixID) ou do ID fixado
+            // Tenta primeiro do ID original, depois do fixado
+            const phoneNumber = getPhoneNumber(rawId) || getPhoneNumber(id);
+            this.stateManager.setPhoneNumber(phoneNumber);
+            
             this.stateManager.setName(
               this.wa.sock?.user?.name ||
               this.wa.sock?.user?.notify ||
               this.wa.sock?.user?.verifiedName ||
+              this.wa.sock?.authState?.creds?.me?.name ||
               ''
             );
             this.stateManager.setProfileUrl(this.wa.sock?.user?.imgUrl || '');
@@ -305,17 +321,32 @@ export default class ConfigWAEvents {
               reason: status,
               message: ErrorMessages.CONNECTION_CLOSED
             });
+          } else if (status === ErrorCodes.REQUEST_TIMEOUT) {
+            // 408 = Request Timeout - requisição expirou, geralmente temporário
+            // Similar ao 402 - não limpa sessão, permite reconexão automática
+            this.wa.emit('close', {
+              reason: status,
+              message: ErrorMessages.REQUEST_TIMEOUT
+            });
+            // Não emite 'stop' - permite que o Baileys tente reconectar automaticamente
           } else if (status === ErrorCodes.CONNECTION_TERMINATED) {
-            // Erro 428: Connection Terminated - Sessão inválida/corrompida
-            // (já rastreado acima)
-            // NÃO tenta reconectar automaticamente - a sessão precisa ser limpa
-            // Emite evento específico para que o usuário possa limpar a sessão
+            // Erro 428: Connection Terminated - Erro temporário de conexão
+            // NÃO é sessão inválida (isso seria 401/421)
+            // Permite reconexão automática - o Baileys tentará reconectar
             this.wa.emit('close', { 
               reason: status, 
               message: ErrorMessages.CONNECTION_TERMINATED
             });
-            // Para a reconexão automática - não adianta tentar com sessão inválida
-            this.wa.emit('stop', { isLogout: false });
+            // Não emite 'stop' - permite que o Baileys tente reconectar automaticamente
+          } else if (status === ErrorCodes.INTERNAL_SERVER_ERROR) {
+            // 500 = Internal Server Error - erro temporário do servidor
+            // Permite reconexão automática
+            this.wa.emit('close', {
+              reason: status,
+              message: ErrorMessages.INTERNAL_SERVER_ERROR_MSG
+            });
+            // Não emite 'stop' - permite que o ConnectionManager tente reconectar
+            // ConnectionManager será chamado pelo ConnectionEventHandler
           } else if (status == DisconnectReason.restartRequired) {
             // restartRequired é tratado pelo ConnectionEventHandler
             // Apenas emite close para notificar (não trata aqui para evitar duplicação)

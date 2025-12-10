@@ -73,14 +73,21 @@ export class SessionManager implements ISessionManager {
    */
   async clearInvalidSession(auth: IAuth): Promise<void> {
     try {
+      // Obtém o diretório da sessão para logs (se disponível)
+      const sessionDir = (auth as any).folder || (auth as any).sessionsDir || 'desconhecido';
+      
+      this.logger.debug(`Limpando sessão inválida do diretório: ${sessionDir}`);
+      
       // Lista todos os arquivos da sessão
       const allFiles = await auth.listAll();
+      this.logger.debug(`Encontrados ${allFiles.length} arquivos na sessão`);
 
       // Remove creds.json primeiro
       try {
         await auth.remove('creds');
+        this.logger.debug('creds.json removido');
       } catch (error) {
-        // Ignora erros silenciosamente
+        this.logger.warn('Erro ao remover creds.json (pode não existir)', error);
       }
 
       // Remove todas as keys relacionadas (pre-key, session, sender-key, app-state-sync-key, etc)
@@ -108,7 +115,7 @@ export class SessionManager implements ISessionManager {
         }
       }
 
-      // Log removido para reduzir verbosidade - sessão limpa silenciosamente
+      this.logger.info(`Sessão limpa: ${removedCount} arquivos removidos do diretório ${sessionDir}`);
     } catch (error) {
       this.logger.error('Erro ao limpar sessão', error);
       throw error;

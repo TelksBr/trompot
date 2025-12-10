@@ -82,20 +82,37 @@ export default class TelegramToRompotConverter {
       this.rompotMessage.mention = await convertor.convert(received);
     }
 
-    this.convertText();
-    this.convertMedia();
-    this.convertAnimantion();
-    this.convertPhoto();
-    this.convertVideo();
-    this.convertAudio();
-    this.convertVoice();
-    this.convertDocument();
-    this.convertSticker();
-    this.convertContact();
-    this.convertDice();
-    this.convertLocation();
-    this.convertVenue();
-    this.convertPoll();
+    // Otimização: converte apenas o tipo de mensagem presente (early return)
+    // Ordem baseada na frequência de uso
+    if (this.telegramMessage.text) {
+      this.convertText();
+    } else if (this.telegramMessage.photo) {
+      this.convertPhoto();
+    } else if (this.telegramMessage.video) {
+      this.convertVideo();
+    } else if (this.telegramMessage.audio) {
+      this.convertAudio();
+    } else if (this.telegramMessage.voice) {
+      this.convertVoice();
+    } else if (this.telegramMessage.document) {
+      this.convertDocument();
+    } else if (this.telegramMessage.sticker) {
+      this.convertSticker();
+    } else if (this.telegramMessage.animation) {
+      this.convertAnimantion();
+    } else if (this.telegramMessage.contact) {
+      this.convertContact();
+    } else if (this.telegramMessage.location) {
+      this.convertLocation();
+    } else if (this.telegramMessage.venue) {
+      this.convertVenue();
+    } else if (this.telegramMessage.poll) {
+      this.convertPoll();
+    } else if (this.telegramMessage.dice) {
+      this.convertDice();
+    } else if (this.telegramMessage.caption) {
+      this.convertMedia();
+    }
 
     return this.rompotMessage;
   }

@@ -1,5 +1,7 @@
 import Client, {
   WhatsAppBot,
+  TelegramBot,
+  TelegramAuth,
   Message,
   Command,
   CMDRunType,
@@ -10,13 +12,21 @@ import Client, {
   ChatType,
 } from '../src';
 
-const wbot = new WhatsAppBot({
-  autoSyncHistory: false,
-  useExperimentalServers: true,
-  logLevel: 'info', // Silencia logs internos do pino, mantém apenas console.info do exemplo
-});
+// Configuração do bot (escolha WhatsApp ou Telegram)
+const USE_TELEGRAM = true; // Mude para false para usar WhatsApp
+const TELEGRAM_BOT_TOKEN = '8089350138:AAF6P9DR6XfQTusebbm0viwkglujn2Zz3go';
 
-const client = new Client(wbot, {
+// Cria bot baseado na configuração
+const bot = USE_TELEGRAM 
+  ? new TelegramBot()
+  : new WhatsAppBot({
+      autoSyncHistory: false,
+      useExperimentalServers: true,
+      logLevel: 'warn', // Reduz logs do Baileys (não mostra "Closing session")
+      autoRejectCalls: true, // Rejeita automaticamente todas as chamadas recebidas
+    });
+
+const client = new Client(bot, {
   disableAutoCommand: false,
   disableAutoCommandForOldMessage: true,
   disableAutoCommandForUnofficialMessage: true,
@@ -25,50 +35,78 @@ const client = new Client(wbot, {
 });
 
 client.on('open', (open: { isNewLogin: boolean }) => {
-  if (open.isNewLogin) {
-    console.info('✅ Nova conexão realizada!');
+  if (USE_TELEGRAM) {
+    console.info('✅ Bot Telegram conectado!');
+    console.info(`🤖 Bot: ${client.bot.name || 'Não disponível'}`);
+    console.info(`🆔 ID: ${client.bot.id || 'Não disponível'}`);
   } else {
-    console.info('✅ Reconectado com sessão existente!');
+    if (open.isNewLogin) {
+      console.info('✅ Nova conexão realizada!');
+    } else {
+      console.info('✅ Reconectado com sessão existente!');
+    }
+    // Mostra apenas o número de telefone
+    const phoneNumber = client.bot.phoneNumber || 'Não disponível';
+    console.info(`📱 Telefone: ${phoneNumber}`);
   }
-
-  console.info('✅ Cliente conectado!');
-  console.info(`📱 Bot ID: ${client.bot.id}`);
-  console.info(`📱 Nome: ${client.bot.name}`);
-  console.info(`📱 Telefone: ${client.bot.phoneNumber}`);
 });
 
-client.on('close', async (update) => {
-  console.warn(`⚠️ Cliente desconectou! Motivo: ${update.reason}`);
-  
-  if (update.reason === 401 || update.reason === 421) {
-    console.warn('⚠️ Sessão desconectada do WhatsApp.');
-    console.info('✅ A biblioteca já limpou TODA a sessão automaticamente (creds + todas as keys).');
-    console.info('🔄 Reconectando automaticamente em 2 segundos...');
+// Configuração de reconexão (apenas para WhatsApp)
+if (!USE_TELEGRAM) {
+  // Contador de tentativas de reconexão para evitar loop infinito
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT_ATTEMPTS = 3;
+  const SESSION_PATH = './example/sessions/whatsapp';
+
+  client.on('close', async (update) => {
+    console.warn(`⚠️ Cliente desconectou! Motivo: ${update.reason}`);
     
-    // Reconecta automaticamente após 2 segundos
-    // A biblioteca já limpou TUDO (creds + keys), então um novo QR code será gerado
-    setTimeout(async () => {
-      try {
-        await client.connect('./example/sessions/whatsapp');
-      } catch (error) {
-        console.error('❌ Erro ao reconectar:', error);
+    if (update.reason === 401 || update.reason === 421) {
+      reconnectAttempts++;
+      
+      if (reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+        console.error(`❌ Limite de tentativas de reconexão atingido (${MAX_RECONNECT_ATTEMPTS}).`);
+        console.error('❌ Por favor, verifique manualmente se a sessão foi limpa e tente novamente.');
+        console.error(`📁 Diretório da sessão: ${SESSION_PATH}`);
+        return;
       }
-    }, 2000);
-  } else if (update.reason === 428) {
-    console.error('❌ Erro 428: Sessão inválida. Não será tentada reconexão automática.');
-  }
-});
+      
+      console.warn('⚠️ Sessão desconectada do WhatsApp.');
+      console.info('✅ A biblioteca já limpou TODA a sessão automaticamente (creds + todas as keys).');
+      console.info(`🔄 Reconectando automaticamente em 2 segundos... (tentativa ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`);
+      
+      // Delay exponencial: 2s, 4s, 8s
+      const delay = Math.min(2000 * Math.pow(2, reconnectAttempts - 1), 10000);
+      
+      // Reconecta automaticamente após delay
+      // A biblioteca já limpou TUDO (creds + keys), então um novo QR code será gerado
+      setTimeout(async () => {
+        try {
+          await client.connect(SESSION_PATH);
+          reconnectAttempts = 0; // Reset contador se conectar com sucesso
+        } catch (error) {
+          console.error('❌ Erro ao reconectar:', error);
+        }
+      }, delay);
+    } else if (update.reason === 428) {
+      console.warn('⚠️ Erro 428: Connection Terminated (erro temporário). O Baileys tentará reconectar automaticamente.');
+      reconnectAttempts = 0; // Reset para erros temporários
+    } else {
+      reconnectAttempts = 0; // Reset para outros erros
+    }
+  });
 
-client.on('qr', async (qr: string) => {
-  console.info('📱 QR Code gerado!');
-  try {
-    const QRCode = (await import('qrcode')).default;
-    console.log('\n' + await QRCode.toString(qr, { type: 'terminal', small: true }));
-    console.log('\n📱 Escaneie o QR code acima com seu WhatsApp\n');
-  } catch (err) {
-    console.log('QR Code (texto):', qr);
-  }
-});
+  client.on('qr', async (qr: string) => {
+    console.info('📱 QR Code gerado!');
+    try {
+      const QRCode = (await import('qrcode')).default;
+      console.log('\n' + await QRCode.toString(qr, { type: 'terminal', small: true }));
+      console.log('\n📱 Escaneie o QR code acima com seu WhatsApp\n');
+    } catch (err) {
+      console.log('QR Code (texto):', qr);
+    }
+  });
+}
 
 client.on('connecting', () => {
   console.info('Tentando conectar cliente...');
@@ -89,20 +127,6 @@ client.on('reconnecting', () => {
 client.on('message', async (message: Message) => {
   if (EmptyMessage.isValid(message)) return;
   if (message.isOld) return;
-
-  console.info(`RECEIVE MESSAGE [${message.chat.id}]`, message.id);
-
-  if (message.isDeleted) {
-    // console.info(` - Message deleted!`);
-  } else if (message.isUpdate) {
-    // console.info(` - Message update:`, message.status);
-  } else if (message.isEdited) {
-    // console.info(` - Message edited:`, message.id, message.text);
-  } else if (message.isOld) {
-    // console.info(` - Message old:`, message.id, message.text);
-  } else {
-    console.info(message);
-  }
 
   if (message.selected.includes('poll')) {
     const cmd = client.searchCommand('/poll');
@@ -149,13 +173,69 @@ client.on('user', async (update) => {
   }
 });
 
-client.on('new-call', async (call) => {
-  console.info('Nova chamada:', call);
+// Handler de chamadas (apenas para WhatsApp)
+if (!USE_TELEGRAM) {
+  client.on('new-call', async (call) => {
+    console.info('Nova chamada recebida:', call);
 
-  await call.reject();
+    // Nota: Se autoRejectCalls estiver ativado na configuração do bot,
+    // a chamada já foi rejeitada automaticamente antes deste evento.
+    // Você ainda pode processar a chamada aqui (ex: enviar mensagem, log, etc.)
+    
+    // Se autoRejectCalls estiver desativado, você pode rejeitar manualmente:
+    // await call.reject();
 
-  await call.chat.send('Não aceitamos chamadas!');
-});
+    // Função auxiliar para tentar enviar mensagem com retry
+    const trySendMessage = async (maxRetries: number = 3) => {
+      for (let attempt = 0; attempt < maxRetries; attempt++) {
+        // Verifica se o JID é válido (deve ser @s.whatsapp.net ou @g.us, não @lid)
+        const isJIDValid = call.chat.id.includes('@s.whatsapp.net') || call.chat.id.includes('@g.us');
+        
+        if (isJIDValid) {
+          try {
+            await call.chat.send('Não aceitamos chamadas!');
+            return true; // Sucesso
+          } catch (error) {
+            console.warn(`Tentativa ${attempt + 1} de enviar mensagem falhou:`, error);
+            if (attempt < maxRetries - 1) {
+              // Aguarda antes de tentar novamente (delay crescente)
+              await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+            }
+          }
+        } else {
+          // JID ainda é LID, tenta normalizar aguardando o mapeamento
+          if (attempt < maxRetries - 1) {
+            console.info(`Aguardando mapeamento LID/PN... (tentativa ${attempt + 1}/${maxRetries})`);
+            // Aguarda um pouco mais para o mapeamento ficar disponível
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+            
+            // Tenta atualizar o chat.id se o mapeamento estiver disponível agora
+            // Nota: Isso não atualiza o objeto Call, mas podemos tentar enviar diretamente
+            try {
+              const normalizedChat = await client.bot.getChat(call.chat);
+              if (normalizedChat && normalizedChat.id !== call.chat.id) {
+                // Se conseguiu normalizar, tenta enviar com o novo JID
+                const normalizedMessage = new Message(normalizedChat, 'Não aceitamos chamadas!');
+                await client.send(normalizedMessage);
+                return true;
+              }
+            } catch (error) {
+              // Continua para próxima tentativa
+            }
+          }
+        }
+      }
+      return false; // Falhou após todas as tentativas
+    };
+
+    // Tenta enviar mensagem (com retry automático)
+    const success = await trySendMessage();
+    
+    if (!success) {
+      console.warn(`Não foi possível enviar mensagem após ${3} tentativas. O mapeamento LID/PN pode não estar disponível ainda.`);
+    }
+  });
+}
 
 client.on('error', (err: any) => {
   console.info('Um erro ocorreu:', err);
@@ -217,5 +297,15 @@ client.on('error', (err: any) => {
   client.addQuickResponse(quickResponse3);
   client.addQuickResponse(quickResponse4);
 
-  await client.connect('./example/sessions/whatsapp');
+  // Conecta baseado na configuração
+  if (USE_TELEGRAM) {
+    await client.connect(
+      new TelegramAuth(
+        TELEGRAM_BOT_TOKEN,
+        './example/sessions/telegram',
+      ),
+    );
+  } else {
+    await client.connect('./example/sessions/whatsapp');
+  }
 })();

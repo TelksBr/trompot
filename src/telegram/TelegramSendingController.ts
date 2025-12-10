@@ -156,15 +156,16 @@ export default class TelegramSendingController {
     const options = TelegramSendingController.getOptions(message);
     const fileOptions = TelegramSendingController.getFileOptions(message);
 
+    let telegramMessage: TelegramBotAPI.Message;
     if (message.isPTT) {
-      var telegramMessage = await this.telegram.bot.sendVoice(
+      telegramMessage = await this.telegram.bot.sendVoice(
         Number(message.chat.id),
         await message.getStream(),
         options,
         fileOptions,
       );
     } else {
-      var telegramMessage = await this.telegram.bot.sendAudio(
+      telegramMessage = await this.telegram.bot.sendAudio(
         Number(message.chat.id),
         await message.getStream(),
         options,
@@ -179,14 +180,15 @@ export default class TelegramSendingController {
     const options = TelegramSendingController.getOptions(message);
     const fileOptions = TelegramSendingController.getFileOptions(message);
 
+    let telegramMessage: TelegramBotAPI.Message;
     if (message.isGIF) {
-      var telegramMessage = await this.telegram.bot.sendAnimation(
+      telegramMessage = await this.telegram.bot.sendAnimation(
         Number(message.chat.id),
         await message.getStream(),
         options,
       );
     } else {
-      var telegramMessage = await this.telegram.bot.sendPhoto(
+      telegramMessage = await this.telegram.bot.sendPhoto(
         Number(message.chat.id),
         await message.getStream(),
         options,
@@ -306,23 +308,66 @@ export default class TelegramSendingController {
     options.chat_id = Number(message.chat.id || 0);
     options.message_id = Number(message.id || 0);
 
-    options.caption_entities = message.mentions.reduce((entities, mention) => {
-      const result = new RegExp(`@(${mention || ''})`).exec(
-        `${message.text || ''}`,
-      );
+    // Função auxiliar para calcular offset em bytes UTF-8
+    const getUTF8ByteOffset = (text: string, charIndex: number): number => {
+      return Buffer.from(text.substring(0, charIndex), 'utf8').length;
+    };
 
-      const searchedMention = result?.shift();
+    // Função auxiliar para calcular comprimento em bytes UTF-8
+    const getUTF8ByteLength = (text: string): number => {
+      return Buffer.from(text, 'utf8').length;
+    };
 
-      if (searchedMention) {
-        entities.push({
-          type: 'mention',
-          offset: result?.index || 0,
-          length: searchedMention.length,
-        });
-      }
+    // Cria entidades de menção de forma segura
+    const text = `${message.text || ''}`;
+    const entities: TelegramBotAPI.MessageEntity[] = [];
 
-      return entities;
-    }, [] as TelegramBotAPI.MessageEntity[]);
+    if (message.mentions && message.mentions.length > 0 && text) {
+      message.mentions.forEach((mention) => {
+        if (!mention) return;
+
+        // Escapa caracteres especiais do regex
+        const escapedMention = mention.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`@(${escapedMention})`, 'g');
+        let match;
+
+        // Encontra todas as ocorrências da menção
+        while ((match = regex.exec(text)) !== null) {
+          const mentionText = match[0]; // Texto completo da menção (ex: "@username")
+          const charIndex = match.index;
+          const charLength = mentionText.length;
+
+          // Calcula offset e length em bytes UTF-8
+          const byteOffset = getUTF8ByteOffset(text, charIndex);
+          const byteLength = getUTF8ByteLength(mentionText);
+
+          // Valida que a entidade não excede o tamanho do texto
+          const textByteLength = getUTF8ByteLength(text);
+          if (byteOffset >= 0 && byteOffset + byteLength <= textByteLength) {
+            // Verifica se não há sobreposição com entidades existentes
+            const hasOverlap = entities.some((entity) => {
+              const entityEnd = entity.offset + entity.length;
+              const newEnd = byteOffset + byteLength;
+              return (
+                (byteOffset >= entity.offset && byteOffset < entityEnd) ||
+                (newEnd > entity.offset && newEnd <= entityEnd) ||
+                (byteOffset <= entity.offset && newEnd >= entityEnd)
+              );
+            });
+
+            if (!hasOverlap) {
+              entities.push({
+                type: 'mention',
+                offset: byteOffset,
+                length: byteLength,
+              });
+            }
+          }
+        }
+      });
+    }
+
+    options.caption_entities = entities;
 
     if (message.mention) {
       options.reply_to_message_id = Number(message.mention.id || 0);
@@ -351,7 +396,9 @@ export default class TelegramSendingController {
     options: TelegramBotAPI.FileOptions = {},
   ) {
     options.filename = `${message.name || ''}`;
-    options.contentType = `${message.mimetype || ''}`;
+    // Garante que contentType seja sempre definido para evitar deprecation warning
+    // Se não houver mimetype, usa 'application/octet-stream' como padrão
+    options.contentType = message.mimetype || 'application/octet-stream';
 
     return options;
   }

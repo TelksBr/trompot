@@ -22,12 +22,18 @@ import TelegramAuth from './TelegramAuth';
 
 import { verifyIsEquals } from '../utils/Generic';
 import Call from '../models/Call';
+import NodeCache from 'node-cache';
 
 export default class TelegramBot extends BotEvents implements IBot {
   public auth: IAuth;
   public bot: TelegramBotAPI;
   public events: TelegramEvents;
   public options: Partial<TelegramBotAPI.ConstructorOptions>;
+  private sendingController: TelegramSendingController;
+  
+  // Caches para melhorar desempenho
+  private chatCache: NodeCache;
+  private botInfoCache: NodeCache;
 
   public id: string = '';
   public status: BotStatus = BotStatus.Offline;
@@ -42,9 +48,36 @@ export default class TelegramBot extends BotEvents implements IBot {
 
     this.auth = new TelegramAuth('', './sessions', false);
     this.bot = new TelegramBotAPI('', this.options);
+    
+    // Aumenta o limite de listeners no EventEmitter do bot para evitar warnings
+    // O bot do TelegramBotAPI é um EventEmitter, então podemos chamar setMaxListeners
+    if (typeof (this.bot as any).setMaxListeners === 'function') {
+      (this.bot as any).setMaxListeners(20);
+    }
+    
     this.events = new TelegramEvents(this);
+    
+    // Cria instância única do controller de envio para reutilização
+    this.sendingController = new TelegramSendingController(this);
+    
+    // Inicializa caches
+    // Cache de chats: TTL de 5 minutos, máximo 1000 chats
+    this.chatCache = new NodeCache({
+      stdTTL: 300, // 5 minutos
+      maxKeys: 1000,
+      useClones: false,
+      checkperiod: 60, // Verifica expiração a cada 1 minuto
+    });
+    
+    // Cache de informações do bot: TTL de 1 hora (raramente muda)
+    this.botInfoCache = new NodeCache({
+      stdTTL: 3600, // 1 hora
+      maxKeys: 1,
+      useClones: false,
+    });
 
-    this.events.configAll();
+    // Não configura eventos no construtor - será configurado no connect()
+    // Isso evita adicionar listeners antes do bot estar pronto
   }
 
   public async connect(auth: string | IAuth): Promise<void> {
@@ -53,6 +86,9 @@ export default class TelegramBot extends BotEvents implements IBot {
         this.status = BotStatus.Offline;
 
         this.emit('connecting', {});
+
+        // Remove listeners antigos antes de conectar (se já houver)
+        this.events.cleanup();
 
         if (typeof auth == 'string') {
           auth = new TelegramAuth(auth, './sessions');
@@ -70,7 +106,11 @@ export default class TelegramBot extends BotEvents implements IBot {
 
         this.bot.startPolling();
 
-        const botInfo = await this.bot.getMe();
+        // Reconfigura eventos após iniciar polling
+        this.events.configAll();
+
+        // Usa getBotInfo() que já tem cache
+        const botInfo = await this.getBotInfo();
 
         this.id = `${botInfo.id}`;
         this.status = BotStatus.Online;
@@ -78,9 +118,14 @@ export default class TelegramBot extends BotEvents implements IBot {
         this.phoneNumber = TelegramUtils.getPhoneNumber(this.id);
         this.profileUrl = await this.getBotProfileUrl();
 
-        resolve();
-
+        // Emite evento 'open' ANTES de resolver a Promise
+        // Isso garante que listeners registrados antes do connect() recebam o evento
         this.emit('open', { isNewLogin: false });
+
+        // Usa setImmediate para garantir que o evento seja processado antes de resolver
+        setImmediate(() => {
+          resolve();
+        });
       } catch (error) {
         reject(error);
       }
@@ -90,17 +135,28 @@ export default class TelegramBot extends BotEvents implements IBot {
   public async reconnect(alert?: boolean): Promise<void> {
     this.status = BotStatus.Offline;
 
+    // Remove listeners antes de reconectar
+    this.events.cleanup();
+
     try {
       await this.bot.close();
     } catch {}
 
     this.emit('reconnecting', {});
 
+    // connect() já reconfigura os eventos, não precisa chamar configAll() aqui
     await this.connect(this.auth);
   }
 
   public async stop(reason: any): Promise<void> {
     this.status = BotStatus.Offline;
+
+    // Remove listeners ao parar
+    this.events.cleanup();
+    
+    // Limpa caches
+    this.chatCache.flushAll();
+    this.botInfoCache.flushAll();
 
     try {
       await this.bot.close();
@@ -120,19 +176,19 @@ export default class TelegramBot extends BotEvents implements IBot {
   }
 
   public async send(message: Message): Promise<Message> {
-    return await new TelegramSendingController(this).send(message);
+    return await this.sendingController.send(message);
   }
 
   public async editMessage(message: Message): Promise<void> {
-    await new TelegramSendingController(this).sendEditedMessage(message);
+    await this.sendingController.sendEditedMessage(message);
   }
 
   public async addReaction(message: ReactionMessage): Promise<void> {
-    await new TelegramSendingController(this).sendReaction(message);
+    await this.sendingController.sendReaction(message);
   }
 
   public async removeReaction(message: ReactionMessage): Promise<void> {
-    await new TelegramSendingController(this).sendReaction(message);
+    await this.sendingController.sendReaction(message);
   }
 
   public async readMessage(message: Message): Promise<void> {
@@ -162,7 +218,23 @@ export default class TelegramBot extends BotEvents implements IBot {
   }
 
   public async getBotName(): Promise<string> {
-    return TelegramUtils.getName(await this.bot.getMe());
+    const botInfo = await this.getBotInfo();
+    return TelegramUtils.getName(botInfo);
+  }
+  
+  /**
+   * Obtém informações do bot com cache
+   */
+  private async getBotInfo(): Promise<TelegramBotAPI.User> {
+    const cacheKey = 'bot_info';
+    let botInfo = this.botInfoCache.get<TelegramBotAPI.User>(cacheKey);
+    
+    if (!botInfo) {
+      botInfo = await this.bot.getMe();
+      this.botInfoCache.set(cacheKey, botInfo);
+    }
+    
+    return botInfo;
   }
 
   public async setBotName(name: string): Promise<void> {
@@ -190,6 +262,13 @@ export default class TelegramBot extends BotEvents implements IBot {
   }
 
   public async getChat(chat: Chat): Promise<Chat | null> {
+    // Tenta obter do cache primeiro
+    const cacheKey = `chat_${chat.id}`;
+    const cachedChat = this.chatCache.get<Chat>(cacheKey);
+    if (cachedChat) {
+      return cachedChat;
+    }
+
     const chatData = await this.auth.get(`chats-${chat.id}`);
 
     if (!chatData) return null;
@@ -198,11 +277,15 @@ export default class TelegramBot extends BotEvents implements IBot {
       const user = await this.getUser(new User(chat.id));
 
       if (user != null) {
-        return Chat.fromJSON({ ...chat, ...user });
+        const result = Chat.fromJSON({ ...chat, ...user });
+        this.chatCache.set(cacheKey, result);
+        return result;
       }
     }
 
-    return Chat.fromJSON(chatData);
+    const result = Chat.fromJSON(chatData);
+    this.chatCache.set(cacheKey, result);
+    return result;
   }
 
   public async getChats(): Promise<string[]> {
@@ -245,12 +328,20 @@ export default class TelegramBot extends BotEvents implements IBot {
     }
 
     await this.auth.set(`chats-${chat.id}`, newChat.toJSON());
+    
+    // Atualiza cache
+    this.chatCache.set(`chat_${chat.id}`, newChat);
+    this.chatCache.del(`tg_chat_${chat.id}`); // Invalida cache da API
 
     this.ev.emit('chat', { action: chatData != null ? 'update' : 'add', chat });
   }
 
   public async removeChat(chat: Chat): Promise<void> {
     await this.auth.remove(`chats-${chat.id}`);
+    
+    // Remove do cache
+    this.chatCache.del(`chat_${chat.id}`);
+    this.chatCache.del(`tg_chat_${chat.id}`);
 
     this.ev.emit('chat', { action: 'remove', chat });
   }
@@ -299,18 +390,37 @@ export default class TelegramBot extends BotEvents implements IBot {
     return `${members.find((member) => member.status == 'creator') || ''}`;
   }
 
+  /**
+   * Obtém dados do chat da API do Telegram com cache
+   */
+  private async getTelegramChatData(chatId: number): Promise<TelegramBotAPI.Chat> {
+    const cacheKey = `tg_chat_${chatId}`;
+    let chatData = this.chatCache.get<TelegramBotAPI.Chat>(cacheKey);
+    
+    if (!chatData) {
+      chatData = await this.bot.getChat(chatId);
+      // Cache por 5 minutos
+      this.chatCache.set(cacheKey, chatData, 300);
+    }
+    
+    return chatData;
+  }
+
   public async getChatName(chat: Chat): Promise<string> {
-    const chatData = await this.bot.getChat(Number(chat.id));
+    const chatData = await this.getTelegramChatData(Number(chat.id));
 
     return `${chatData.title || ''}`;
   }
 
   public async setChatName(chat: Chat, name: string): Promise<void> {
     await this.bot.setChatTitle(Number(chat.id), `${name}`);
+    // Invalida cache após atualização
+    this.chatCache.del(`tg_chat_${chat.id}`);
+    this.chatCache.del(`chat_${chat.id}`);
   }
 
   public async getChatDescription(chat: Chat): Promise<string> {
-    const chatData = await this.bot.getChat(Number(chat.id));
+    const chatData = await this.getTelegramChatData(Number(chat.id));
 
     return `${chatData.description || chatData.bio || ''}`;
   }
@@ -339,7 +449,7 @@ export default class TelegramBot extends BotEvents implements IBot {
     chat: Chat,
     lowQuality?: boolean,
   ): Promise<string> {
-    const chatData = await this.bot.getChat(Number(chat.id));
+    const chatData = await this.getTelegramChatData(Number(chat.id));
 
     const fileId = lowQuality
       ? chatData.photo?.small_file_id
@@ -437,7 +547,7 @@ export default class TelegramBot extends BotEvents implements IBot {
   }
 
   public async getUserName(user: User): Promise<string> {
-    const chat = await this.bot.getChat(Number(user.id));
+    const chat = await this.getTelegramChatData(Number(user.id));
 
     return `${chat.title || ''}`;
   }
@@ -447,7 +557,7 @@ export default class TelegramBot extends BotEvents implements IBot {
   }
 
   public async getUserDescription(user: User): Promise<string> {
-    const chatData = await this.bot.getChat(Number(user.id));
+    const chatData = await this.getTelegramChatData(Number(user.id));
 
     return `${chatData.description || chatData.bio || ''}`;
   }

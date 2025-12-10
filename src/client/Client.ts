@@ -13,6 +13,7 @@ import ConnectionConfig from '../configs/ConnectionConfig';
 
 import Message, { MessageStatus, MessageType } from '../messages/Message';
 import ErrorMessage from '../messages/ErrorMessage';
+import EmptyMessage from '../messages/EmptyMessage';
 import MediaMessage from '../messages/MediaMessage';
 import ReactionMessage from '../messages/ReactionMessage';
 import QuickResponseController from '../modules/quickResponse/QuickResponseController';
@@ -89,14 +90,21 @@ export default class Client<Bot extends IBot = IBot>
       try {
         message.inject({ clientId: this.id, botId: this.bot.id });
 
+        // Marca como lida em background - não bloqueia o processamento
         if (!message.fromMe && !this.config.disableAutoRead) {
           if (!message.isDeleted && !message.isUpdate) {
-            await message.read();
+            // Executa em background sem aguardar
+            message.read().catch(() => {
+              // Ignora erros - não é crítico
+            });
           }
         }
 
-        message.user = (await this.getUser(message.user)) || message.user;
-        message.chat = (await this.getChat(message.chat)) || message.chat;
+        // REMOVIDO: getUser e getChat durante processamento inicial
+        // A mensagem já vem com user e chat básicos do ConvertWAMessage
+        // Essas chamadas só adicionam dados extras do cache e não são necessárias
+        // para processar a mensagem. Se necessário, podem ser chamadas depois em background.
+        // Isso torna o processamento instantâneo como era antes.
 
         if (
           !message.chat.timestamp ||
@@ -105,20 +113,14 @@ export default class Client<Bot extends IBot = IBot>
           message.chat.timestamp = message.timestamp;
         }
 
+        // Atualiza mention - usa dados já disponíveis, sem chamadas adicionais
+        // Isso torna o processamento instantâneo
         if (message.mention) {
-          if (message.mention.chat.id != message.chat.id) {
-            message.mention.chat =
-              (await this.getChat(message.mention.chat)) ||
-              message.mention.chat;
-          } else {
+          if (message.mention.chat.id == message.chat.id) {
             message.mention.chat = message.chat;
           }
 
-          if (message.mention.user.id != message.user.id) {
-            message.mention.user =
-              (await this.getUser(message.mention.user)) ||
-              message.mention.user;
-          } else {
+          if (message.mention.user.id == message.user.id) {
             message.mention.user = message.user;
           }
         }
@@ -126,6 +128,12 @@ export default class Client<Bot extends IBot = IBot>
         if (this.messageHandler.resolveMessage(message)) return;
 
         this.emit('message', message);
+
+        // CRÍTICO: Não processa comandos ou quick responses para mensagens próprias
+        // Isso evita loops infinitos quando o bot recebe suas próprias mensagens
+        if (message.fromMe) {
+          return;
+        }
 
         if (this.config.disableAutoCommand) return;
         if (this.config.disableAutoCommandForOldMessage && message.isOld)
@@ -136,14 +144,24 @@ export default class Client<Bot extends IBot = IBot>
         )
           return;
 
-        await this.quickResponseController.searchAndExecute(message);
+        // QuickResponse em background - não bloqueia
+        this.quickResponseController.searchAndExecute(message).catch(() => {
+          // Ignora erros - não é crítico
+        });
 
         const command = this.searchCommand(message.text);
 
         if (command != null) {
-          this.runCommand(command, message, CMDRunType.Exec);
+          // Executa comando - precisa aguardar para capturar erros
+          // Mas não bloqueia a emissão da mensagem (já foi emitida acima)
+          this.runCommand(command, message, CMDRunType.Exec).catch((err) => {
+            console.error('[Client] Erro ao executar comando:', err);
+          });
         }
       } catch (err) {
+        // Só emite ErrorMessage se for um erro crítico
+        // Erros em getUser/getChat não devem bloquear a mensagem
+        console.error('[Client] Erro crítico ao processar mensagem:', err);
         this.emit('message', new ErrorMessage(message.chat, err));
       }
     });
@@ -178,10 +196,10 @@ export default class Client<Bot extends IBot = IBot>
       try {
         this.emit('close', update);
 
-        // Não reconecta automaticamente para erros 401, 421, 428, 402
-        // 401, 421, 428: Sessão precisa ser limpa manualmente
+        // Não reconecta automaticamente apenas para erros 401, 421 (token expirado)
+        // 428 foi removido - é erro temporário que permite reconexão
         // 402: Baileys gerencia reconexão automaticamente, não precisamos interferir
-        if (update.reason === 401 || update.reason === 421 || update.reason === 428 || update.reason === 402) {
+        if (update.reason === 401 || update.reason === 421 || update.reason === 402) {
           return;
         }
 
@@ -326,9 +344,29 @@ export default class Client<Bot extends IBot = IBot>
   }
 
   public async awaitConnectionOpen(): Promise<void> {
-    if (this.bot.status != BotStatus.Online) {
-      await this.awaitEvent('open', this.config.maxTimeout);
+    // Verifica se já está conectado antes de aguardar
+    const sock = (this.bot as any).sock;
+    const statusIsOnline = this.bot.status === BotStatus.Online;
+    const sockIsOpen = sock?.ws?.isOpen === true;
+    
+    // Determina se está conectado baseado no tipo de bot
+    // Telegram não tem sock, então verifica apenas status
+    // WhatsApp precisa de sock.ws.isOpen E status Online
+    const isTelegram = !sock; // Telegram não tem sock
+    const isAlreadyConnected = isTelegram 
+      ? statusIsOnline 
+      : (statusIsOnline && sockIsOpen);
+    
+    if (isAlreadyConnected) {
+      return;
     }
+    
+    // Para WhatsApp: Se o socket está aberto mas status não é Online, também não precisa aguardar
+    if (!isTelegram && sockIsOpen) {
+      return;
+    }
+    
+    await this.awaitEvent('open', this.config.maxTimeout);
   }
 
   public getCommandController(): CommandController {
@@ -489,7 +527,9 @@ export default class Client<Bot extends IBot = IBot>
   }
 
   public async readMessage(message: Message): Promise<void> {
-    await this.funcHandler.exec('message', this.bot.readMessage, message);
+    // Executa diretamente sem passar por funcHandler para evitar delay
+    // readMessage não precisa de validação de conexão - é apenas cache local
+    await this.bot.readMessage(message);
 
     if (
       message.status == MessageStatus.Sending ||
@@ -574,25 +614,37 @@ export default class Client<Bot extends IBot = IBot>
   }
 
   public async send(message: Message): Promise<Message> {
-    message = Message.apply(message, { clientId: this.id, botId: this.bot.id });
+    try {
+      message = Message.apply(message, { clientId: this.id, botId: this.bot.id });
 
-    if (!this.config.disableAutoTyping) {
-      await this.changeChatStatus(
-        message.chat,
-        message.type == 'audio' ? ChatStatus.Recording : ChatStatus.Typing,
-      );
-    }
+      // changeChatStatus não é crítico - executa em background sem bloquear
+      // Isso torna o envio de mensagens instantâneo
+      if (!this.config.disableAutoTyping) {
+        this.changeChatStatus(
+          message.chat,
+          message.type == 'audio' ? ChatStatus.Recording : ChatStatus.Typing,
+        ).catch(() => {
+          // Ignora erros - não é crítico
+        });
+      }
 
-    if ('file' in message) {
-      return Message.apply(
-        await this.funcHandler.exec('sendMediaMessage', this.bot.send, message),
-        { clientId: this.id, botId: this.bot.id },
-      );
-    } else {
-      return Message.apply(
-        await this.funcHandler.exec('sendMessage', this.bot.send, message),
-        { clientId: this.id, botId: this.bot.id },
-      );
+      let result: Message;
+      if ('file' in message) {
+        result = Message.apply(
+          await this.funcHandler.exec('sendMediaMessage', this.bot.send, message),
+          { clientId: this.id, botId: this.bot.id },
+        );
+      } else {
+        result = Message.apply(
+          await this.funcHandler.exec('sendMessage', this.bot.send, message),
+          { clientId: this.id, botId: this.bot.id },
+        );
+      }
+
+      return result;
+    } catch (error) {
+      console.error('[Client.send] Erro ao enviar mensagem:', error);
+      throw error;
     }
   }
 

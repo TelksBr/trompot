@@ -149,7 +149,7 @@ export class ConnectionManager implements IConnectionManager {
     // REMOVIDO: Listener duplicado de connection.update
     // O ConfigWAEvents já escuta este evento e gerencia toda a lógica
     // ConnectionManager não precisa escutar diretamente para evitar processamento duplicado
-    
+
     // Nota: Baileys não tem evento 'error' direto no ev
     // Erros são tratados através de connection.update com connection: 'close'
   }
@@ -210,11 +210,11 @@ export class ConnectionManager implements IConnectionManager {
    * Decide se deve tentar reconectar baseado no código de erro
    */
   private shouldReconnect(statusCode: number): boolean {
-    // Não reconecta para erros que indicam sessão inválida
+    // Não reconecta apenas para erros que indicam token expirado (sessão realmente inválida)
+    // 428 foi removido - é erro temporário que permite reconexão
     const nonReconnectableErrors = [
-      DisconnectReason.loggedOut, // 401
-      ErrorCodes.LOGGED_OUT_ALT, // 421
-      ErrorCodes.CONNECTION_TERMINATED, // 428
+      DisconnectReason.loggedOut, // 401 - Token expirado
+      ErrorCodes.LOGGED_OUT_ALT, // 421 - Token expirado (alternativo)
     ];
 
     return !nonReconnectableErrors.includes(statusCode);

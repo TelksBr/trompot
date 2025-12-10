@@ -1,4 +1,4 @@
-import { isJidGroup } from '@whiskeysockets/baileys';
+import { isJidGroup, GroupMetadata, Chat as BaileysChat, proto } from '@whiskeysockets/baileys';
 import Chat from '../../modules/chat/Chat';
 import ChatType from '../../modules/chat/ChatType';
 import ChatStatus from '../../modules/chat/ChatStatus';
@@ -7,6 +7,9 @@ import { WAStatus } from '../WAStatus';
 import { getImageURL, verifyIsEquals } from '../../utils/Generic';
 import { getPhoneNumber } from '../ID';
 import { Validation } from '../utils/Validation';
+import { isValidJID } from '../constants/JIDPatterns';
+import { TIMESTAMP_MULTIPLIER } from '../constants/ConfigDefaults';
+import Long from 'long';
 import WhatsAppBot from '../WhatsAppBot';
 
 /**
@@ -198,7 +201,7 @@ export class ChatOperations {
 
     if (chatReaded.type !== ChatType.Group) return [];
 
-    await this.bot.readChat(chat);
+    await this.readChat(chat);
 
     return (await this.bot.getChat(chat))?.admins || [];
   }
@@ -304,6 +307,108 @@ export class ChatOperations {
   async setDisappearingMessages(chat: Chat | string, duration: number): Promise<void> {
     const chatId = typeof chat === 'string' ? chat : chat.id;
     await this.bot.sock.sendMessage(chatId, { disappearingMessagesInChat: duration });
+  }
+
+  /**
+   * Lê o chat e atualiza suas informações
+   */
+  async readChat(
+    chat: Partial<Chat>,
+    metadata?: Partial<GroupMetadata> & Partial<BaileysChat>,
+    updateMetadata: boolean = true,
+  ): Promise<void> {
+    try {
+      // Valida JID usando utilitário
+      if (!chat.id || !isValidJID(chat.id)) {
+        return;
+      }
+      
+      // Valida se socket está disponível (mas não exige conexão completa para leitura)
+      if (!this.bot.sock) {
+        return;
+      }
+
+      chat.type = isJidGroup(chat.id) ? ChatType.Group : ChatType.PV;
+
+      if (chat.type == ChatType.Group) {
+        if (updateMetadata) {
+          chat.profileUrl =
+            (await this.getChatProfileUrl(new Chat(chat.id))) || undefined;
+
+          if (!metadata) {
+            try {
+              metadata = await this.bot.sock.groupMetadata(chat.id);
+            } catch {}
+          } else if (!metadata.participants) {
+            try {
+              metadata = {
+                ...metadata,
+                ...(await this.bot.sock.groupMetadata(chat.id)),
+              };
+            } catch {}
+
+            if (metadata.participant) {
+              metadata.participants = [
+                ...(metadata.participants || []),
+                ...metadata.participant.map((p) => {
+                  return {
+                    id: p.userJid,
+                    isSuperAdmin:
+                      p.rank == proto.GroupParticipant.Rank.SUPERADMIN,
+                    isAdmin: p.rank == proto.GroupParticipant.Rank.ADMIN,
+                  } as any;
+                }),
+              ];
+            }
+          }
+        }
+
+        if (metadata?.participants) {
+          chat.users = [];
+          chat.admins = [];
+
+          for (const p of metadata.participants) {
+            chat.users.push(p.id);
+
+            if (p.admin == 'admin' || p.isAdmin) {
+              chat.admins.push(`${p.id}`);
+            } else if (p.isSuperAdmin) {
+              chat.leader = p.id;
+
+              chat.admins.push(`${p.id}`);
+            }
+          }
+        }
+
+        if (metadata?.subjectOwner) {
+          chat.leader = metadata.subjectOwner;
+        }
+      }
+
+      if (metadata?.subject || metadata?.name) {
+        chat.name = metadata.subject || metadata.name || undefined;
+      }
+
+      if (metadata?.desc || metadata?.description) {
+        chat.description = metadata.desc || metadata.description || undefined;
+      }
+
+      if (metadata?.unreadCount) {
+        chat.unreadCount = metadata.unreadCount || undefined;
+      }
+
+      if (metadata?.conversationTimestamp) {
+        if (Long.isLong(metadata.conversationTimestamp)) {
+          chat.timestamp = metadata.conversationTimestamp.toNumber() * TIMESTAMP_MULTIPLIER;
+        } else {
+          chat.timestamp = Number(metadata.conversationTimestamp) * TIMESTAMP_MULTIPLIER;
+        }
+      }
+
+      if (chat.id) {
+        await this.updateChat({ id: chat.id, ...chat });
+      }
+    } catch {}
   }
 }
 

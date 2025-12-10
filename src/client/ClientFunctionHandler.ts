@@ -1,5 +1,6 @@
 import IClient from './IClient';
 import IBot from '../bot/IBot';
+import { BotStatus } from '../bot/BotStatus';
 
 export default class ClientFunctionHandler<B extends IBot, T extends string> {
   /** Todas funções */
@@ -22,11 +23,48 @@ export default class ClientFunctionHandler<B extends IBot, T extends string> {
       error: unknown = undefined,
     ): Promise<[Awaited<ReturnType<F>> | undefined, unknown]> => {
       try {
-        if (count >= this.client.config.maxRequests) return [undefined, error];
+        if (count >= this.client.config.maxRequests) {
+          return [undefined, error];
+        }
 
-        await this.client.awaitConnectionOpen();
+        // Verifica conexão de forma mais robusta
+        // Para WhatsApp: verifica sock.ws.isOpen
+        // Para Telegram: verifica apenas status === Online
+        const sock = (this.client.bot as any).sock;
+        const statusIsOnline = this.client.bot.status === BotStatus.Online;
+        const sockIsOpen = sock?.ws?.isOpen === true;
+        
+        // Determina se está conectado baseado no tipo de bot
+        // Telegram não tem sock, então verifica apenas status
+        // WhatsApp precisa de sock.ws.isOpen E status Online
+        const isTelegram = !sock; // Telegram não tem sock
+        const isConnected = isTelegram 
+          ? statusIsOnline 
+          : (statusIsOnline && sockIsOpen);
+        
+        // CRÍTICO: Só aguarda conexão se realmente não estiver conectado
+        // Isso evita timeouts desnecessários, especialmente para Telegram
+        if (!isConnected) {
+          try {
+            await this.client.awaitConnectionOpen();
+          } catch (err) {
+            // Verifica novamente se realmente não está conectado
+            const sockAfterError = (this.client.bot as any).sock;
+            const statusAfterError = this.client.bot.status === BotStatus.Online;
+            const sockIsOpenAfterError = sockAfterError?.ws?.isOpen === true;
+            const isTelegramAfterError = !sockAfterError;
+            const stillNotConnected = isTelegramAfterError
+              ? !statusAfterError
+              : (!statusAfterError || !sockIsOpenAfterError);
+            
+            if (stillNotConnected) {
+              throw err; // Só relança se realmente não estiver conectado
+            }
+          }
+        }
 
-        return [await func.bind(this.client.bot)(...args), undefined];
+        const result = await func.bind(this.client.bot)(...args);
+        return [result, undefined];
       } catch (error) {
         await new Promise((res) =>
           setTimeout(res, this.client.config.requestsDelay),

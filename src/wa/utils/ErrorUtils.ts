@@ -31,7 +31,7 @@ export class ErrorUtils {
     logger?: ILoggerService
   ): ErrorMessage {
     if (logger) {
-      logger.error('Erro ao processar mensagem', error);
+      logger.error(error, 'Erro ao processar mensagem');
     }
 
     const errorObj = error instanceof Error 
@@ -39,7 +39,7 @@ export class ErrorUtils {
       : new Error(JSON.stringify(error));
 
     return new ErrorMessage(
-      fixID(remoteJid || ''),
+      fixID(remoteJid ?? ''),
       errorObj
     );
   }

@@ -26,6 +26,7 @@ import WhatsAppBot from "./WhatsAppBot";
 import User from "../modules/user/User";
 import Chat from "../modules/chat/Chat";
 import { fixID } from "./ID";
+import { BotStatus } from "../bot/BotStatus";
 
 export default class ConvertWAMessage {
   public type?: MessageUpsertType;
@@ -251,7 +252,9 @@ export default class ConvertWAMessage {
    * @param content
    */
   public convertExtendedTextMessage(content: proto.Message["extendedTextMessage"]) {
-    this.message = TextMessage.fromJSON({ ...this.message, type: MessageType.Text, text: content });
+    // Extrai o texto do extendedTextMessage (content.text ou content.matchedText)
+    const text = content?.text || content?.matchedText || '';
+    this.message = TextMessage.fromJSON({ ...this.message, type: MessageType.Text, text });
   }
 
   /**
@@ -340,25 +343,32 @@ export default class ConvertWAMessage {
     if (contentType == "stickerMessage") {
       msg = StickerMessage.fromJSON({ ...msg, type: MessageType.Sticker, file });
 
-      try {
-        const waSticker = await getWaSticker();
+      // Extração de metadata do sticker é opcional e não deve bloquear a conversão
+      // Só tenta extrair se o bot estiver conectado
+      if (this.bot.status === BotStatus.Online && this.bot.sock?.ws?.isOpen) {
+        try {
+          const waSticker = await getWaSticker();
 
-        if (waSticker) {
-          await waSticker
-            .extractMetadata(await this.bot.downloadStreamMessage(file))
-            .then((data) => {
-              if (StickerMessage.isValid(msg)) {
+          if (waSticker) {
+            // Usa Promise.allSettled para não bloquear se falhar
+            Promise.allSettled([
+              this.bot.downloadStreamMessage(file).then((stream) => 
+                waSticker.extractMetadata(stream)
+              )
+            ]).then(([result]) => {
+              if (result.status === 'fulfilled' && StickerMessage.isValid(msg)) {
+                const data = result.value;
                 msg.author = data["sticker-pack-publisher"] || "";
                 msg.stickerId = data["sticker-pack-id"] || "";
                 msg.pack = data["sticker-pack-name"] || "";
               }
-            })
-            .catch((err) => {
-              this.bot.emit("error", err);
+            }).catch((err) => {
+              // Ignora erros silenciosamente - metadata é opcional
             });
+          }
+        } catch (err) {
+          // Ignora erros silenciosamente - metadata é opcional
         }
-      } catch (err) {
-        this.bot.emit("error", err);
       }
     }
 
