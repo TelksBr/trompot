@@ -17,6 +17,7 @@ export class MenuCommand extends Command {
 • /menu - Mostra este menu
 • /hello - Comando de teste
 • /poll - Criar uma enquete
+• /sendimage ou /imagem - Envia uma imagem de teste
 
 🤖 Bot funcionando corretamente!
     `.trim();

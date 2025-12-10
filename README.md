@@ -75,7 +75,8 @@ const wbot = new WhatsAppBot({
   autoSyncHistory: false,        // Sincronizar histórico automaticamente
   useExperimentalServers: true,  // Usar servidores experimentais para mídia
   autoLoadContactInfo: false,    // Carregar informações de contatos automaticamente
-  autoLoadGroupInfo: false,       // Carregar informações de grupos automaticamente
+  autoLoadGroupInfo: false,      // Carregar informações de grupos automaticamente
+  autoRejectCalls: false,        // Rejeitar automaticamente todas as chamadas recebidas
   logLevel: 'info',              // Nível de log: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent'
 });
 
@@ -124,7 +125,11 @@ client.on("close", (update) => {
       }
     }, 2000);
   } else if (update.reason === 428) {
-    console.error("❌ Erro 428: Sessão inválida. Não será tentada reconexão automática.");
+    console.warn("⚠️ Erro 428: Connection Terminated (erro temporário). O Baileys tentará reconectar automaticamente.");
+  } else if (update.reason === 408) {
+    console.warn("⚠️ Erro 408: Request Timeout (erro temporário). O Baileys tentará reconectar automaticamente.");
+  } else if (update.reason === 500) {
+    console.warn("⚠️ Erro 500: Internal Server Error (erro temporário). A biblioteca tentará reconectar automaticamente.");
   }
 });
 
@@ -140,8 +145,9 @@ await client.connect(SESSION_PATH);
    - **Limpa automaticamente** toda a sessão (creds.json + todas as keys)
    - **Gera um novo QR code** quando você chamar `connect()` novamente
    - **O cliente não precisa fazer nada manualmente** - a biblioteca gerencia tudo
-4. **Reconexão inteligente**: O sistema tenta reconectar automaticamente com retry exponencial em caso de falhas temporárias.
-5. **Após escanear QR**: Quando você escaneia o QR code, o WhatsApp força uma desconexão (`restartRequired`). A biblioteca cria automaticamente um novo socket e finaliza a conexão corretamente.
+4. **Reconexão inteligente**: O sistema tenta reconectar automaticamente com retry exponencial em caso de falhas temporárias (402, 408, 428, 500).
+5. **Erros temporários**: Erros 402, 408, 428 e 500 são tratados como temporários e permitem reconexão automática sem limpar a sessão.
+6. **Após escanear QR**: Quando você escaneia o QR code, o WhatsApp força uma desconexão (`restartRequired`). A biblioteca cria automaticamente um novo socket e finaliza a conexão corretamente.
 
 ### Configurações Avançadas do WhatsAppBot
 
@@ -157,12 +163,17 @@ const wbot = new WhatsAppBot({
   // Servidores
   useExperimentalServers: false, // Usar servidores experimentais para download de mídia
   
+  // Chamadas
+  autoRejectCalls: false,        // Rejeitar automaticamente todas as chamadas recebidas
+  
   // Logging
   logLevel: 'info',              // Nível de log: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent'
   
   // Outras opções do Baileys podem ser passadas aqui
   qrTimeout: 60000,              // Timeout para QR code (60 segundos)
   defaultQueryTimeoutMs: 10000,  // Timeout padrão para queries
+  retryRequestDelayMs: 500,      // Delay entre tentativas de retry
+  maxMsgRetryCount: 5,           // Máximo de tentativas de reenvio de mensagem
 });
 ```
 
@@ -173,8 +184,9 @@ const wbot = new WhatsAppBot({
 - ✅ **O QR code só aparece** quando não há sessão válida ou quando a sessão expira
 - ✅ **Erros 401/421**: A biblioteca limpa automaticamente toda a sessão (creds + keys) e gera novo QR code
 - ✅ **Reconexão automática**: A biblioteca gerencia reconexões e limpeza de sessão - o cliente não precisa fazer nada manualmente
+- ✅ **Erros temporários (402, 408, 428, 500)**: A biblioteca tenta reconectar automaticamente sem limpar a sessão
 - ❌ **Não mude o caminho de sessão** entre conexões se quiser reconexão automática
-- ⚠️ **Erro 428**: Indica sessão inválida, o sistema não tentará reconectar automaticamente
+- ⚠️ **autoRejectCalls**: Quando ativado, todas as chamadas recebidas são rejeitadas automaticamente antes do evento `new-call`
 
 
 ## Telegram (Beta)
@@ -235,6 +247,9 @@ const wbot = new WhatsAppBot({
   // Servidores
   useExperimentalServers: false, // Usar servidores experimentais para download de mídia
   
+  // Chamadas
+  autoRejectCalls: false,        // Rejeitar automaticamente todas as chamadas recebidas
+  
   // Logging (novo na versão refatorada)
   logLevel: 'info',              // Nível de log: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent'
   
@@ -287,7 +302,11 @@ client.on("close", (update) => {
     console.info("✅ A biblioteca já limpou TODA a sessão automaticamente (creds + todas as keys).");
     console.info("🔄 Chame connect() novamente para gerar um novo QR code.");
   } else if (update.reason === 428) {
-    console.error("❌ Erro 428: Sessão inválida. Não será tentada reconexão automática.");
+    console.warn("⚠️ Erro 428: Connection Terminated (erro temporário). O Baileys tentará reconectar automaticamente.");
+  } else if (update.reason === 408) {
+    console.warn("⚠️ Erro 408: Request Timeout (erro temporário). O Baileys tentará reconectar automaticamente.");
+  } else if (update.reason === 500) {
+    console.warn("⚠️ Erro 500: Internal Server Error (erro temporário). A biblioteca tentará reconectar automaticamente.");
   }
 });
 
@@ -635,10 +654,12 @@ A biblioteca foi refatorada com uma arquitetura modular que separa responsabilid
 ### Compatibilidade Baileys v7.0.0
 
 A biblioteca é totalmente compatível com Baileys v7.0.0, incluindo:
-- Suporte a LIDs (Local Identifiers) e PNs (Phone Numbers)
+- Suporte a LIDs (Local Identifiers) e PNs (Phone Numbers) com normalização automática
 - Eventos obrigatórios (`messaging-history.set`, `lid-mapping.update`)
 - Protobufs usando `.create()` em vez de `.fromObject()`
 - Remoção de ACKs automáticos (conforme recomendação do Baileys)
+- Fila de mensagens pendentes para LIDs não mapeados ainda
+- Normalização automática de JIDs com múltiplas estratégias de fallback
 
 ### Melhorias de Performance
 

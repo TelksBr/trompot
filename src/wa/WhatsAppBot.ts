@@ -145,7 +145,7 @@ export default class WhatsAppBot extends BotEvents implements IBot {
   }
 
   // Handlers de eventos (privados)
-  private connectionEventHandler: ConnectionEventHandler;
+  public connectionEventHandler: ConnectionEventHandler;
   private messageEventHandler: MessageEventHandler;
   private historyEventHandler: HistoryEventHandler;
   private contactEventHandler: ContactEventHandler;
@@ -319,6 +319,16 @@ export default class WhatsAppBot extends BotEvents implements IBot {
       this.auth = auth;
     }
 
+    // Valida sessão antes de criar socket (evita gerar QR code desnecessário)
+    const validation = await this.sessionManager.validateSession(this.auth);
+    if (!validation.isValid && validation.shouldGenerateQR) {
+      this.loggerService.warn(`⚠️ Sessão inválida: ${validation.reason}. QR code será gerado.`);
+    } else if (validation.isValid) {
+      this.loggerService.info('✅ Sessão válida encontrada. Reconectando sem QR code.');
+    } else {
+      this.loggerService.warn(`⚠️ Sessão pode estar inválida, mas QR code não será gerado automaticamente.`);
+    }
+
     // Cria e configura o socket (método centralizado)
     await this.createSocket();
   }
@@ -349,6 +359,14 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     // Carrega credenciais
     const { state, saveCreds } = await getBaileysAuth(this.auth);
     this.saveCreds = saveCreds;
+
+    // Verifica se as credenciais são válidas antes de criar socket
+    // Se não forem válidas, o Baileys gerará QR code automaticamente
+    if (!state.creds || !state.creds.registered || !state.creds.me?.id) {
+      this.loggerService.warn('Credenciais inválidas detectadas. QR code será gerado pelo Baileys.');
+    } else {
+      this.loggerService.debug('Credenciais válidas carregadas. Reconectando sem QR code.');
+    }
 
     // Cria logger para o Baileys (filtra logs de sessão se logLevel for 'warn' ou superior)
     // O Baileys usa este logger para logs internos, incluindo "Closing session"
@@ -480,9 +498,10 @@ export default class WhatsAppBot extends BotEvents implements IBot {
     
     this.emit('reconnecting', {});
     
-    // Reconecta chamando connect novamente
+    // Reconecta usando o auth existente (CRÍTICO: não criar novo auth)
     // Para restartRequired (force=true), reconecta imediatamente sem delay
-    await this.connect();
+    // Usa createSocket() diretamente para manter o auth original
+    await this.createSocket();
   }
 
   /**

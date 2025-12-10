@@ -13,7 +13,7 @@ import Client, {
 } from '../src';
 
 // Configuração do bot (escolha WhatsApp ou Telegram)
-const USE_TELEGRAM = true; // Mude para false para usar WhatsApp
+const USE_TELEGRAM = false; // Mude para false para usar WhatsApp
 const TELEGRAM_BOT_TOKEN = '8089350138:AAF6P9DR6XfQTusebbm0viwkglujn2Zz3go';
 
 // Cria bot baseado na configuração
@@ -22,7 +22,7 @@ const bot = USE_TELEGRAM
   : new WhatsAppBot({
       autoSyncHistory: false,
       useExperimentalServers: true,
-      logLevel: 'warn', // Reduz logs do Baileys (não mostra "Closing session")
+      logLevel: 'info', // Reduz logs do Baileys (não mostra "Closing session")
       autoRejectCalls: true, // Rejeita automaticamente todas as chamadas recebidas
     });
 

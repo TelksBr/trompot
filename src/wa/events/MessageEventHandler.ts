@@ -85,7 +85,7 @@ export class MessageEventHandler {
             if (
               !(message.messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT)
             ) {
-              return; // Not read other null messages
+              continue; // Not read other null messages - CORRIGIDO: usar continue em vez de return
             }
 
             const msgRetryCount =
@@ -129,10 +129,10 @@ export class MessageEventHandler {
               proto.Message.ProtocolMessage.Type
                 .INITIAL_SECURITY_NOTIFICATION_SETTING_SYNC
           ) {
-            return; // Not read empty messages
+            continue; // Not read empty messages - CORRIGIDO: usar continue em vez de return
           }
 
-          if (this.bot.messagesCached.includes(key.id!)) return;
+          if (this.bot.messagesCached.includes(key.id!)) continue; // CORRIGIDO: usar continue em vez de return
           this.bot.addMessageCache(key.id!);
 
           const chatId = fixID(key.remoteJid || this.bot.id);
@@ -233,8 +233,8 @@ export class MessageEventHandler {
             });
           }
 
-          // Retorna para não emitir mensagem duplicada
-          return;
+          // Continua para processar próxima mensagem (já foi emitida acima)
+          continue;
 
           // Log de debug para verificar se mensagens estão sendo emitidas
           this.logger.debug(

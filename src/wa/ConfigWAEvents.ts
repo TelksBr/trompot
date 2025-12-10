@@ -1,5 +1,6 @@
 import {
   DisconnectReason,
+  ConnectionState,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 
@@ -285,6 +286,22 @@ export default class ConfigWAEvents {
         }
 
         if (update.connection == 'close') {
+          // Delegamos o tratamento completo de 'close' para o ConnectionEventHandler
+          // para garantir limpeza de sessão (401/421) e restartRequired (515).
+          if (this.wa.connectionEventHandler?.onConnectionClose) {
+            try {
+              if (!update.connection) {
+                return; // Sem estado de conexão, nada a fazer
+              }
+              // Asserção para ConnectionState completo (connection é obrigatório aqui)
+              await this.wa.connectionEventHandler.onConnectionClose(update as ConnectionState);
+              return; // Evita duplicar emissões de eventos/estado
+            } catch (err) {
+              this.wa.emit('error', err);
+              return;
+            }
+          }
+
             const status =
             (update.lastDisconnect?.error as Boom)?.output?.statusCode ||
             (typeof update.lastDisconnect?.error === 'number' 

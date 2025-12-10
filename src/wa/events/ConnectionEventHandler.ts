@@ -49,6 +49,13 @@ export class ConnectionEventHandler {
   }
 
   /**
+   * Exposto para que ConfigWAEvents delegue o tratamento de 'close'
+   */
+  public async onConnectionClose(update: ConnectionState): Promise<void> {
+    await this.handleClose(update);
+  }
+
+  /**
    * Trata atualizações de conexão
    * NOTA: Os connectionListeners já são notificados pelo ConfigWAEvents
    * Este método apenas gerencia o estado adicional
@@ -219,6 +226,12 @@ export class ConnectionEventHandler {
         message: ErrorMessages.CONNECTION_CLOSED
       });
       // NÃO emite 'stop' para 402 - permite que o Baileys tente reconectar
+      // Garante tentativa de reconexão mesmo que Baileys não o faça
+      try {
+        await this.bot.reconnect(false, false, true);
+      } catch (error) {
+        this.logger.error('Erro ao tentar reconectar após erro 402', error);
+      }
     } else if (status === ErrorCodes.REQUEST_TIMEOUT) {
       // 408 = Request Timeout - requisição expirou, geralmente temporário
       // Similar ao 402 (Connection Closed) - não limpa sessão, permite reconexão
@@ -227,31 +240,37 @@ export class ConnectionEventHandler {
         message: ErrorMessages.REQUEST_TIMEOUT
       });
       // NÃO emite 'stop' para 408 - permite que o Baileys tente reconectar
+      // Garante tentativa de reconexão mesmo que Baileys não o faça
+      try {
+        await this.bot.reconnect(false, false, true);
+      } catch (error) {
+        this.logger.error('Erro ao tentar reconectar após erro 408', error);
+      }
     } else if (status === ErrorCodes.CONNECTION_TERMINATED) {
+      // 428 = Connection Terminated - erro temporário
+      // Emite eventos e aciona reconexão via ConnectionManager
       this.bot.emit('close', {
         reason: status,
         message: ErrorMessages.CONNECTION_TERMINATED
       });
       this.bot.emit('stop', { isLogout: false });
+
+      // Garante reconexão imediata
+      try {
+        await this.bot.reconnect(false, false, true);
+      } catch (error) {
+        this.logger.error('Erro ao tentar reconectar após erro 428', error);
+      }
     } else if (status === ErrorCodes.INTERNAL_SERVER_ERROR) {
       // 500 = Internal Server Error - erro temporário do servidor, permite reconexão
       this.bot.emit('close', {
         reason: status,
         message: ErrorMessages.INTERNAL_SERVER_ERROR_MSG
       });
-      // NÃO emite 'stop' para 500 - permite que o ConnectionManager tente reconectar
-      // Chama ConnectionManager.handleDisconnect para tentar reconectar automaticamente
-      // O handleDisconnect verifica shouldReconnect e tenta reconectar se necessário
+      // NÃO emite 'stop' para 500 - permite reconexão
+      // Garante reconexão mesmo se o Baileys não fizer
       try {
-        const { Boom } = require('@hapi/boom');
-        const error = new Boom('Internal Server Error', { 
-          statusCode: 500,
-          output: { statusCode: 500 }
-        });
-        // Chama ConnectionManager.handleDisconnect para tentar reconectar automaticamente
-        if (this.bot.connectionManager && typeof this.bot.connectionManager.handleDisconnect === 'function') {
-          await this.bot.connectionManager.handleDisconnect(error);
-        }
+        await this.bot.reconnect(false, false, true);
       } catch (error) {
         this.logger.error('Erro ao tentar reconectar após erro 500', error);
       }
