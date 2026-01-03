@@ -395,11 +395,86 @@ export default class TelegramSendingController {
     message: MediaMessage,
     options: TelegramBotAPI.FileOptions = {},
   ) {
-    options.filename = `${message.name || ''}`;
+    // Se não houver nome definido, gera um baseado no tipo de mensagem e mimetype
+    if (!message.name || message.name.trim() === '') {
+      const mimetype = message.mimetype || 'application/octet-stream';
+      const ext = TelegramSendingController.getExtensionFromMimetype(mimetype);
+      
+      // Define um nome baseado no tipo de mensagem
+      if (AudioMessage.isValid(message)) {
+        options.filename = `audio${ext}`;
+      } else if (ImageMessage.isValid(message)) {
+        options.filename = `image${ext}`;
+      } else if (VideoMessage.isValid(message)) {
+        options.filename = `video${ext}`;
+      } else if (StickerMessage.isValid(message)) {
+        options.filename = `sticker${ext}`;
+      } else {
+        options.filename = `file${ext}`;
+      }
+    } else {
+      options.filename = message.name;
+    }
+
     // Garante que contentType seja sempre definido para evitar deprecation warning
     // Se não houver mimetype, usa 'application/octet-stream' como padrão
     options.contentType = message.mimetype || 'application/octet-stream';
 
     return options;
+  }
+
+  private static getExtensionFromMimetype(mimetype: string): string {
+    const mimeMap: Record<string, string> = {
+      // Imagens
+      'image/jpeg': '.jpg',
+      'image/jpg': '.jpg',
+      'image/png': '.png',
+      'image/gif': '.gif',
+      'image/webp': '.webp',
+      'image/svg+xml': '.svg',
+      'image/bmp': '.bmp',
+      'image/tiff': '.tiff',
+      
+      // Áudio
+      'audio/mpeg': '.mp3',
+      'audio/mp3': '.mp3',
+      'audio/ogg': '.ogg',
+      'audio/wav': '.wav',
+      'audio/webm': '.webm',
+      'audio/aac': '.aac',
+      'audio/flac': '.flac',
+      'audio/m4a': '.m4a',
+      
+      // Vídeo
+      'video/mp4': '.mp4',
+      'video/mpeg': '.mpeg',
+      'video/webm': '.webm',
+      'video/ogg': '.ogv',
+      'video/quicktime': '.mov',
+      'video/x-msvideo': '.avi',
+      'video/x-matroska': '.mkv',
+      
+      // Documentos
+      'application/pdf': '.pdf',
+      'application/zip': '.zip',
+      'application/x-rar-compressed': '.rar',
+      'application/json': '.json',
+      'application/xml': '.xml',
+      'text/plain': '.txt',
+      'text/html': '.html',
+      'text/css': '.css',
+      'text/javascript': '.js',
+      'application/javascript': '.js',
+      
+      // Office
+      'application/msword': '.doc',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+      'application/vnd.ms-excel': '.xls',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+      'application/vnd.ms-powerpoint': '.ppt',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+    };
+
+    return mimeMap[mimetype] || '.bin';
   }
 }
