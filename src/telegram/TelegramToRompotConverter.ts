@@ -1,4 +1,4 @@
-import TelegramBotAPI from 'node-telegram-bot-api';
+import type { TelegramMessage } from './telegramTypes';
 
 import Message, { MessageStatus, MessageType } from '../messages/Message';
 import LocationMessage from '../messages/LocationMessage';
@@ -19,10 +19,10 @@ import User from '../modules/user/User';
 import { TelegramUtils } from './TelegramUtils';
 
 export default class TelegramToRompotConverter {
-  public telegramMessage: TelegramBotAPI.Message;
+  public telegramMessage: TelegramMessage;
   public rompotMessage: Message;
 
-  constructor(telegramMessage: TelegramBotAPI.Message) {
+  constructor(telegramMessage: TelegramMessage) {
     this.telegramMessage = telegramMessage;
     this.rompotMessage = new EmptyMessage();
   }

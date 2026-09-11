@@ -1,7 +1,7 @@
 import { WASocket } from '@whiskeysockets/baileys';
 import { ILoggerService } from '../interfaces/ILoggerService';
 import { LIDMappingService } from './LIDMappingService';
-import { getID, getPhoneNumber } from '../ID';
+import { getID, isLidJid, jidUser, toLidJid } from '../ID';
 import { isValidJID } from '../constants/JIDPatterns';
 
 /**
@@ -29,24 +29,24 @@ export class LIDNormalizationService {
    * Normaliza JID LID usando múltiplas estratégias para máxima velocidade
    * 1. Cache do LIDMappingService (mais rápido)
    * 2. Store do Baileys (rápido se disponível)
-   * 3. Tenta extrair do próprio LID (se for um número válido)
-   * 4. Retorna null se não conseguir
+   * 3. Retorna null se não conseguir
+   *
+   * rc14: getPNForLID exige `user@lid`, não o número nu.
    */
   async normalizeJID(jid: string, quickOnly: boolean = false): Promise<string | null> {
-    if (!jid || isValidJID(jid)) {
+    if (!jid || (isValidJID(jid) && !isLidJid(jid))) {
       return jid;
     }
 
-    if (!jid.endsWith('@lid')) {
+    if (!isLidJid(jid) && jid.includes('@')) {
       return null;
     }
 
-    const lid = jid.replace('@lid', '');
+    const lidJid = toLidJid(jid);
 
-    // Estratégia 1: Cache do LIDMappingService (mais rápido - instantâneo)
     try {
       if (this.lidMappingService) {
-        const pn = await this.lidMappingService.getPNForLID(lid);
+        const pn = await this.lidMappingService.getPNForLID(lidJid);
         if (pn) {
           return getID(pn);
         }
@@ -55,14 +55,12 @@ export class LIDNormalizationService {
       // Ignora erro
     }
 
-    // Estratégia 2: Store do Baileys (rápido se disponível)
     try {
       if (this.socket?.signalRepository?.lidMapping) {
-        const pn = await this.socket.signalRepository.lidMapping.getPNForLID(lid);
+        const pn = await this.socket.signalRepository.lidMapping.getPNForLID(lidJid);
         if (pn) {
-          // Armazena no cache para próxima vez
           if (this.lidMappingService) {
-            await this.lidMappingService.storeLIDPNMapping(lid, pn);
+            await this.lidMappingService.storeLIDPNMapping(lidJid, pn);
           }
           return getID(pn);
         }
@@ -71,36 +69,26 @@ export class LIDNormalizationService {
       // Ignora erro
     }
 
-    // Estratégia 3: Verifica se o LID é um número válido (alguns LIDs são números de telefone)
-    // IMPORTANTE: Isso NÃO funciona na maioria dos casos - LIDs não são números de telefone
-    // Removido para evitar falsos positivos que podem causar envio para número errado
-    // O LID é um identificador interno do WhatsApp, não o número de telefone
-
-    // Se quickOnly, retorna null imediatamente (não tenta mais)
     if (quickOnly) {
       return null;
     }
 
-    // Estratégia 4: Tenta algumas vezes com delays pequenos (para casos onde o mapeamento está sendo atualizado)
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         if (this.socket?.signalRepository?.lidMapping) {
-          const pn = await this.socket.signalRepository.lidMapping.getPNForLID(lid);
+          const pn = await this.socket.signalRepository.lidMapping.getPNForLID(lidJid);
           if (pn) {
-            // Armazena no cache
             if (this.lidMappingService) {
-              await this.lidMappingService.storeLIDPNMapping(lid, pn);
+              await this.lidMappingService.storeLIDPNMapping(lidJid, pn);
             }
             return getID(pn);
           }
         }
-        
-        // Aguarda um pouco antes de tentar novamente
+
         if (attempt < 2) {
           await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
         }
       } catch (error) {
-        // Ignora erro
         if (attempt < 2) {
           await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
         }
@@ -115,24 +103,22 @@ export class LIDNormalizationService {
    * Retorna o JID original se não conseguir normalizar
    */
   normalizeJIDSync(jid: string): string {
-    if (!jid || isValidJID(jid)) {
+    if (!jid || (isValidJID(jid) && !isLidJid(jid))) {
       return jid;
     }
 
-    if (!jid.endsWith('@lid')) {
+    if (!isLidJid(jid) && jid.includes('@')) {
       return jid;
     }
 
-    const lid = jid.replace('@lid', '');
+    const lidJid = toLidJid(jid);
 
-    // Tenta obter do cache síncronamente
     try {
-      // Acessa o cache através do ICacheService
       const cacheService = (this.lidMappingService as any).cache;
       if (cacheService && typeof cacheService.getLIDMappingCache === 'function') {
         const cache = cacheService.getLIDMappingCache();
         if (cache) {
-          const cachedPN = cache.get(`lid:${lid}`);
+          const cachedPN = cache.get(`lid:${jidUser(lidJid)}`);
           if (cachedPN && typeof cachedPN === 'string') {
             return getID(cachedPN);
           }
@@ -142,10 +128,6 @@ export class LIDNormalizationService {
       // Ignora erro
     }
 
-    // IMPORTANTE: Não tenta extrair número do LID - LIDs não são números de telefone
-    // Isso pode causar envio para número errado
-
     return jid;
   }
 }
-

@@ -1,4 +1,9 @@
 import TelegramBotAPI from 'node-telegram-bot-api';
+import type {
+  TelegramBotOptions,
+  TelegramChatFullInfo,
+  TelegramUser,
+} from './telegramTypes';
 
 import IAuth from '../client/IAuth';
 
@@ -28,7 +33,7 @@ export default class TelegramBot extends BotEvents implements IBot {
   public auth: IAuth;
   public bot: TelegramBotAPI;
   public events: TelegramEvents;
-  public options: Partial<TelegramBotAPI.ConstructorOptions>;
+  public options: TelegramBotOptions;
   private sendingController: TelegramSendingController;
   
   // Caches para melhorar desempenho
@@ -41,7 +46,7 @@ export default class TelegramBot extends BotEvents implements IBot {
   public name: string = '';
   public profileUrl: string = '';
 
-  constructor(options?: Partial<TelegramBotAPI.ConstructorOptions>) {
+  constructor(options?: TelegramBotOptions) {
     super();
 
     this.options = { ...(options || {}) };
@@ -98,13 +103,13 @@ export default class TelegramBot extends BotEvents implements IBot {
 
         const botToken = await this.auth.get('BOT_TOKEN');
 
-        (this.bot as any).token = botToken;
-        (this.bot as any).options = {
-          ...(this.bot as any).options,
-          ...this.options,
-        };
+        this.bot = new TelegramBotAPI(botToken, this.options);
 
-        this.bot.startPolling();
+        if (typeof this.bot.setMaxListeners === 'function') {
+          this.bot.setMaxListeners(20);
+        }
+
+        await this.bot.startPolling();
 
         // Reconfigura eventos após iniciar polling
         this.events.configAll();
@@ -139,7 +144,7 @@ export default class TelegramBot extends BotEvents implements IBot {
     this.events.cleanup();
 
     try {
-      await this.bot.close();
+      await this.bot.stopPolling();
     } catch {}
 
     this.emit('reconnecting', {});
@@ -159,7 +164,7 @@ export default class TelegramBot extends BotEvents implements IBot {
     this.botInfoCache.flushAll();
 
     try {
-      await this.bot.close();
+      await this.bot.stopPolling();
     } catch {}
 
     this.emit('stop', { isLogout: false });
@@ -225,9 +230,9 @@ export default class TelegramBot extends BotEvents implements IBot {
   /**
    * Obtém informações do bot com cache
    */
-  private async getBotInfo(): Promise<TelegramBotAPI.User> {
+  private async getBotInfo(): Promise<TelegramUser> {
     const cacheKey = 'bot_info';
-    let botInfo = this.botInfoCache.get<TelegramBotAPI.User>(cacheKey);
+    let botInfo = this.botInfoCache.get<TelegramUser>(cacheKey);
     
     if (!botInfo) {
       botInfo = await this.bot.getMe();
@@ -393,9 +398,9 @@ export default class TelegramBot extends BotEvents implements IBot {
   /**
    * Obtém dados do chat da API do Telegram com cache
    */
-  private async getTelegramChatData(chatId: number): Promise<TelegramBotAPI.Chat> {
+  private async getTelegramChatData(chatId: number): Promise<TelegramChatFullInfo> {
     const cacheKey = `tg_chat_${chatId}`;
-    let chatData = this.chatCache.get<TelegramBotAPI.Chat>(cacheKey);
+    let chatData = this.chatCache.get<TelegramChatFullInfo>(cacheKey);
     
     if (!chatData) {
       chatData = await this.bot.getChat(chatId);

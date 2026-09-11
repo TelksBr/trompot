@@ -1,7 +1,6 @@
 import Message from '../../messages/Message';
 import { ILoggerService } from '../interfaces/ILoggerService';
-import { getID } from '../ID';
-import { isValidJID } from '../constants/JIDPatterns';
+import { getID, jidUser } from '../ID';
 
 export interface PendingMessage {
   message: Message;
@@ -31,7 +30,7 @@ export class PendingMessageQueue {
    * Adiciona uma mensagem à fila de pendentes
    */
   add(message: Message, resolve: (message: Message) => void, reject: (error: Error) => void): void {
-    const lid = message.chat.id.replace('@lid', '');
+    const lid = jidUser(message.chat.id);
     
     if (!this.queue.has(lid)) {
       this.queue.set(lid, []);
@@ -54,7 +53,8 @@ export class PendingMessageQueue {
    * Processa mensagens pendentes para um LID quando o mapeamento ficar disponível
    */
   async processPendingMessages(lid: string, pn: string): Promise<void> {
-    const pendingMessages = this.queue.get(lid);
+    const lidKey = jidUser(lid);
+    const pendingMessages = this.queue.get(lidKey) || this.queue.get(lid);
     if (!pendingMessages || pendingMessages.length === 0) {
       return;
     }
@@ -63,6 +63,7 @@ export class PendingMessageQueue {
     this.logger.info(`✅ Mapeamento LID/PN disponível! Processando ${pendingMessages.length} mensagem(ns) pendente(s) para LID ${lid} -> ${normalizedJID}`);
 
     // Remove da fila ANTES de processar (evita processamento duplicado)
+    this.queue.delete(lidKey);
     this.queue.delete(lid);
 
     // Processa todas as mensagens pendentes para este LID
@@ -116,7 +117,7 @@ export class PendingMessageQueue {
    * Retorna o número de mensagens pendentes para um LID
    */
   getPendingCount(lid: string): number {
-    return this.queue.get(lid)?.length || 0;
+    return this.queue.get(jidUser(lid))?.length || this.queue.get(lid)?.length || 0;
   }
 
   /**

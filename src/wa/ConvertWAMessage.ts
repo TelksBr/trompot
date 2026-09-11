@@ -25,7 +25,7 @@ import ChatType from "../modules/chat/ChatType";
 import WhatsAppBot from "./WhatsAppBot";
 import User from "../modules/user/User";
 import Chat from "../modules/chat/Chat";
-import { fixID } from "./ID";
+import { fixID, preferPhoneJid } from "./ID";
 import { BotStatus } from "../bot/BotStatus";
 
 export default class ConvertWAMessage {
@@ -117,11 +117,23 @@ export default class ConvertWAMessage {
     this.message.fromMe = !!this.waMessage.key.fromMe;
     this.message.id = this.message.id || this.waMessage.key.id || "";
 
-    this.message.chat = new Chat(fixID(waMessage?.key?.remoteJid || this.bot.id));
+    const key = waMessage.key;
+    const chatJid = isJidGroup(key?.remoteJid || "")
+      ? key?.remoteJid || this.bot.id
+      : preferPhoneJid(key?.remoteJid, key?.remoteJidAlt, this.bot.id);
+
+    this.message.chat = new Chat(fixID(chatJid));
     this.message.chat.type = isJidGroup(this.message.chat.id) ? ChatType.Group : ChatType.PV;
     this.message.status = ConvertWAMessage.convertMessageStatus(ConvertWAMessage.isMessageUpdate(waMessage) ? waMessage.update.status! : waMessage.status!);
 
-    this.message.user = new User(fixID(waMessage.key.fromMe ? this.bot.id : waMessage.key.participant || waMessage.participant || waMessage.key.remoteJid || ""));
+    const senderJid = key.fromMe
+      ? this.bot.id
+      : preferPhoneJid(
+          key.participant || waMessage.participant || key.remoteJid,
+          key.participantAlt || key.remoteJidAlt,
+        );
+
+    this.message.user = new User(fixID(senderJid || ""));
   }
 
   /**

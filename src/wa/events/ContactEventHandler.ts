@@ -21,10 +21,14 @@ export class ContactEventHandler {
 
       for (const update of updates) {
         try {
-          if (isJidGroup(update.id)) {
-            await this.bot.readChat({ id: update.id }, update);
+          if (!update.id) continue;
+
+          const contactId = update.phoneNumber || update.id;
+
+          if (isJidGroup(contactId)) {
+            await this.bot.readChat({ id: contactId }, update);
           } else {
-            await this.bot.readUser({ id: update.id }, update);
+            await this.bot.readUser({ id: contactId }, update);
           }
         } catch (error) {
           this.logger.error('Erro ao processar contacts.upsert', error);
@@ -39,10 +43,14 @@ export class ContactEventHandler {
 
       for (const update of updates) {
         try {
-          if (isJidGroup(update.id)) {
-            await this.bot.readChat({ id: update.id }, update);
+          if (!update.id) continue;
+
+          const contactId = update.phoneNumber || update.id;
+
+          if (isJidGroup(contactId)) {
+            await this.bot.readChat({ id: contactId }, update);
           } else {
-            await this.bot.readUser({ id: update.id }, update);
+            await this.bot.readUser({ id: contactId }, update);
           }
         } catch (error) {
           this.logger.error('Erro ao processar contacts.update', error);
@@ -52,4 +60,3 @@ export class ContactEventHandler {
     });
   }
 }
-

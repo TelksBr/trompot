@@ -2,7 +2,7 @@ import { WASocket, WACallEvent } from '@whiskeysockets/baileys';
 import { ILoggerService } from '../interfaces/ILoggerService';
 import Call, { CallStatus } from '../../models/Call';
 import WhatsAppBot from '../WhatsAppBot';
-import { getID } from '../ID';
+import { getID, toLidJid } from '../ID';
 import { isValidJID } from '../constants/JIDPatterns';
 
 export class CallEventHandler {
@@ -19,20 +19,28 @@ export class CallEventHandler {
    * Tenta múltiplas vezes com delay, pois o mapeamento pode não estar disponível imediatamente
    */
   private async normalizeJID(jid: string, retries: number = 2): Promise<string> {
-    if (!jid || isValidJID(jid)) {
+    if (!jid) {
       return jid;
     }
 
-    // Verifica se é um JID LID (termina com @lid)
-    if (jid.endsWith('@lid')) {
-      const lid = jid.replace('@lid', '');
-      
-      // Tenta obter o PN com retries
+    if (isValidJID(jid) && !jid.endsWith('@lid') && !jid.endsWith('@hosted.lid')) {
+      return jid;
+    }
+
+    if (jid.endsWith('@lid') || jid.endsWith('@hosted.lid')) {
+      const lidJid = toLidJid(jid);
+
       for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-          // Usa o LIDMappingService do bot (que tem cache e retry interno)
+          if (this.bot.lidNormalizationService) {
+            const normalized = await this.bot.lidNormalizationService.normalizeJID(lidJid, false);
+            if (normalized && isValidJID(normalized)) {
+              return normalized;
+            }
+          }
+
           if (this.bot.sock?.signalRepository?.lidMapping) {
-            const pn = await this.bot.sock.signalRepository.lidMapping.getPNForLID(lid);
+            const pn = await this.bot.sock.signalRepository.lidMapping.getPNForLID(lidJid);
             
             if (pn) {
               // Converte PN para JID válido
@@ -68,11 +76,9 @@ export class CallEventHandler {
           // Guarda o JID original do evento (pode ser LID)
           const originalChatJID = event.chatId || event.groupJid || event.from || '';
           
-          // Normaliza JID LID para JID válido (para o Call que será emitido)
-          let normalizedChat = await this.normalizeJID(originalChatJID);
-          
-          // Normaliza também o JID do usuário (event.from)
-          let userJID = event.from || '';
+          let normalizedChat = await this.normalizeJID(event.callerPn || originalChatJID);
+
+          let userJID = event.callerPn || event.from || '';
           if (userJID) {
             userJID = await this.normalizeJID(userJID);
           }

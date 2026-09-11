@@ -368,20 +368,21 @@ export class ChatOperations {
           chat.admins = [];
 
           for (const p of metadata.participants) {
-            chat.users.push(p.id);
+            const participantId = p.phoneNumber || p.id;
+            chat.users.push(participantId);
 
             if (p.admin == 'admin' || p.isAdmin) {
-              chat.admins.push(`${p.id}`);
+              chat.admins.push(`${participantId}`);
             } else if (p.isSuperAdmin) {
-              chat.leader = p.id;
+              chat.leader = participantId;
 
-              chat.admins.push(`${p.id}`);
+              chat.admins.push(`${participantId}`);
             }
           }
         }
 
-        if (metadata?.subjectOwner) {
-          chat.leader = metadata.subjectOwner;
+        if (metadata?.subjectOwnerPn || metadata?.subjectOwner) {
+          chat.leader = metadata.subjectOwnerPn || metadata.subjectOwner;
         }
       }
 

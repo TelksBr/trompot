@@ -1,8 +1,8 @@
-import { WASocket, MessageUpsertType, proto, isJidGroup } from '@whiskeysockets/baileys';
+import { WASocket, MessageUpsertType, proto, isJidGroup, WAMessage, WAMessageKey } from '@whiskeysockets/baileys';
 import { ILoggerService } from '../interfaces/ILoggerService';
 import ConvertWAMessage from '../ConvertWAMessage';
 import ErrorMessage from '../../messages/ErrorMessage';
-import { fixID } from '../ID';
+import { fixID, preferPhoneJid } from '../ID';
 import WhatsAppBot from '../WhatsAppBot';
 import Chat from '../../modules/chat/Chat';
 import User from '../../modules/user/User';
@@ -68,7 +68,7 @@ export class MessageEventHandler {
    * Lê e processa mensagens (v7.0.0: processa TODAS as mensagens do array)
    */
   public async readMessages(
-    messages: proto.IWebMessageInfo[],
+    messages: WAMessage[],
     type: MessageUpsertType = 'notify',
   ) {
     try {
@@ -77,7 +77,7 @@ export class MessageEventHandler {
         try {
           if (!message) continue;
 
-          const key = message.key;
+          const key = message.key as WAMessageKey;
           if (!key) continue;
           if (key.remoteJid === JID_PATTERNS.BROADCAST) continue;
 
@@ -135,7 +135,11 @@ export class MessageEventHandler {
           if (this.bot.messagesCached.includes(key.id!)) continue; // CORRIGIDO: usar continue em vez de return
           this.bot.addMessageCache(key.id!);
 
-          const chatId = fixID(key.remoteJid || this.bot.id);
+          const chatId = fixID(
+            isJidGroup(key.remoteJid || '')
+              ? key.remoteJid || this.bot.id
+              : preferPhoneJid(key.remoteJid, key.remoteJidAlt, this.bot.id),
+          );
 
           // Calcula timestamp sem bloquear
           let timestamp: number | undefined;
@@ -162,10 +166,10 @@ export class MessageEventHandler {
           const userId = fixID(
             key.fromMe
               ? this.bot.id
-              : key.participant ||
-                  message.participant ||
-                  key.remoteJid ||
-                  '',
+              : preferPhoneJid(
+                  key.participant || message.participant || key.remoteJid,
+                  key.participantAlt || key.remoteJidAlt,
+                ),
           );
 
           // Atualiza cache diretamente sem passar por getChat/getUser

@@ -27,7 +27,11 @@ export class HistoryEventHandler {
       if (!this.bot.config.autoSyncHistory) return;
 
       try {
-        const { chats, contacts, messages, syncType } = update;
+        const { chats, contacts, messages, lidPnMappings } = update;
+
+        if (lidPnMappings?.length) {
+          await this.bot.lidMappingService.storeLIDPNMappings(lidPnMappings);
+        }
 
         // Log removido para reduzir verbosidade
 
@@ -60,7 +64,7 @@ export class HistoryEventHandler {
 
               // Armazena contato
               await this.bot.updateUser({
-                id: contact.id,
+                id: contact.phoneNumber || contact.id,
                 name: contact.notify || contact.verifiedName || contact.name,
               });
             } catch (error) {

@@ -14,6 +14,8 @@ export const ErrorCodes = {
   REQUEST_TIMEOUT: 408,
   /** Connection Terminated - Erro temporário de conexão (permite reconexão) */
   CONNECTION_TERMINATED: 428,
+  /** Connection Replaced - outra sessão assumiu o dispositivo (440) */
+  CONNECTION_REPLACED: 440,
 } as const;
 
 /**
@@ -28,6 +30,10 @@ export const ErrorMessages = {
   CONNECTION_TERMINATED: 'Connection Terminated (428) - Erro temporário de conexão. O Baileys tentará reconectar automaticamente.',
   RECONNECTION_CANCELLED: (code: number) => 
     `Reconexão cancelada: Erro ${code} detectado. Limpe a pasta de sessão e faça login novamente.`,
+  CONNECTION_REPLACED:
+    'Conexão substituída (440). Outra sessão assumiu este dispositivo.',
+  REACHOUT_TIMELOCK:
+    'Conta restrita (reachout timelock). O WhatsApp bloqueou envios temporariamente.',
 } as const;
 
 

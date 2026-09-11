@@ -1,4 +1,9 @@
-import TelegramBotAPI from 'node-telegram-bot-api';
+import type {
+  FileMeta,
+  InlineKeyboardMarkup,
+  TelegramMessage,
+  TelegramMessageEntity,
+} from './telegramTypes';
 
 import LocationMessage from '../messages/LocationMessage';
 import ReactionMessage from '../messages/ReactionMessage';
@@ -18,6 +23,18 @@ import { ButtonType } from '../messages/ButtonMessage';
 import TelegramToRompotConverter from './TelegramToRompotConverter';
 import { TelegramUtils } from './TelegramUtils';
 import TelegramBot from './TelegramBot';
+
+type TelegramSendOptions = {
+  chat_id?: number;
+  message_id?: number;
+  caption_entities?: TelegramMessageEntity[];
+  reply_parameters?: { message_id: number };
+  caption?: string;
+  title?: string;
+  duration?: number;
+  emoji?: string;
+  reply_markup?: InlineKeyboardMarkup;
+};
 
 export default class TelegramSendingController {
   public telegram: TelegramBot;
@@ -145,7 +162,7 @@ export default class TelegramSendingController {
     const telegramMessage = await this.telegram.bot.sendPoll(
       Number(message.chat.id),
       `${message.text}`,
-      message.options.map((option) => `${option.name || ''}`),
+      message.options.map((option) => ({ text: `${option.name || ''}` })),
       options,
     );
 
@@ -156,7 +173,7 @@ export default class TelegramSendingController {
     const options = TelegramSendingController.getOptions(message);
     const fileOptions = TelegramSendingController.getFileOptions(message);
 
-    let telegramMessage: TelegramBotAPI.Message;
+    let telegramMessage: TelegramMessage;
     if (message.isPTT) {
       telegramMessage = await this.telegram.bot.sendVoice(
         Number(message.chat.id),
@@ -180,7 +197,7 @@ export default class TelegramSendingController {
     const options = TelegramSendingController.getOptions(message);
     const fileOptions = TelegramSendingController.getFileOptions(message);
 
-    let telegramMessage: TelegramBotAPI.Message;
+    let telegramMessage: TelegramMessage;
     if (message.isGIF) {
       telegramMessage = await this.telegram.bot.sendAnimation(
         Number(message.chat.id),
@@ -293,17 +310,7 @@ export default class TelegramSendingController {
 
   public static getOptions(
     message: Message,
-    options: TelegramBotAPI.SendBasicOptions &
-      TelegramBotAPI.SendAudioOptions &
-      TelegramBotAPI.SendVoiceOptions &
-      TelegramBotAPI.SendAnimationOptions &
-      TelegramBotAPI.SendVideoOptions &
-      TelegramBotAPI.SendDocumentOptions &
-      TelegramBotAPI.SendContactOptions &
-      TelegramBotAPI.SendLocationOptions &
-      TelegramBotAPI.SendPollOptions &
-      TelegramBotAPI.SendDiceOptions &
-      TelegramBotAPI.EditMessageTextOptions = {},
+    options: TelegramSendOptions = {},
   ) {
     options.chat_id = Number(message.chat.id || 0);
     options.message_id = Number(message.id || 0);
@@ -320,7 +327,7 @@ export default class TelegramSendingController {
 
     // Cria entidades de menção de forma segura
     const text = `${message.text || ''}`;
-    const entities: TelegramBotAPI.MessageEntity[] = [];
+    const entities: TelegramMessageEntity[] = [];
 
     if (message.mentions && message.mentions.length > 0 && text) {
       message.mentions.forEach((mention) => {
@@ -369,8 +376,8 @@ export default class TelegramSendingController {
 
     options.caption_entities = entities;
 
-    if (message.mention) {
-      options.reply_to_message_id = Number(message.mention.id || 0);
+    if (message.mention?.id) {
+      options.reply_parameters = { message_id: Number(message.mention.id) };
     }
 
     if (MediaMessage.isValid(message)) {
@@ -393,7 +400,7 @@ export default class TelegramSendingController {
 
   public static getFileOptions(
     message: MediaMessage,
-    options: TelegramBotAPI.FileOptions = {},
+    options: FileMeta = {},
   ) {
     // Se não houver nome definido, gera um baseado no tipo de mensagem e mimetype
     if (!message.name || message.name.trim() === '') {

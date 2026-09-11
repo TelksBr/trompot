@@ -11,7 +11,7 @@ import { ErrorHandler } from '../services/ErrorHandler';
 import { PendingMessageQueue } from '../services/PendingMessageQueue';
 import WhatsAppBot from '../WhatsAppBot';
 import ChatType from '../../modules/chat/ChatType';
-import { getID } from '../ID';
+import { getID, toLidJid } from '../ID';
 
 /**
  * Operações relacionadas a mensagens
@@ -39,8 +39,8 @@ export class MessageOperations {
     }
 
     // Verifica se é um JID LID (termina com @lid)
-    if (jid.endsWith('@lid')) {
-      const lid = jid.replace('@lid', '');
+    if (jid.endsWith('@lid') || jid.endsWith('@hosted.lid')) {
+      const lid = toLidJid(jid);
       
       // Tenta usar o LIDNormalizationService (múltiplas estratégias, mais rápido)
       try {
@@ -59,7 +59,7 @@ export class MessageOperations {
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
           if (this.bot.sock?.signalRepository?.lidMapping) {
-            const pn = await this.bot.sock.signalRepository.lidMapping.getPNForLID(lid);
+            const pn = await this.bot.sock.signalRepository.lidMapping.getPNForLID(toLidJid(lid));
             
             if (pn) {
               return getID(pn);

@@ -294,12 +294,14 @@ export default class WhatsAppBot extends BotEvents implements IBot {
         return msg;
       },
       async getMessage(key) {
-        const msg = await waBot.store.loadMessage(fixID(key.remoteJid!), key.id!);
-        if (!msg) return undefined;
-        
-        // v7.0.0-rc.5: Retornar mensagem diretamente
-        // BufferJSON será implementado quando estiver disponível na API estável
-        return msg.message;
+        const jids = [key.remoteJid, key.remoteJidAlt].filter(Boolean) as string[];
+
+        for (const jid of jids) {
+          const msg = await waBot.store.loadMessage(fixID(jid), key.id!);
+          if (msg?.message) return msg.message;
+        }
+
+        return undefined;
       },
       cachedGroupMetadata: async (jid) => this.groupMetadataCache.get(jid),
     };

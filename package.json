@@ -1,6 +1,6 @@
 {
   "name": "trompot",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "description": "Chatbot API multi-plataforma em TypeScript. Fork do Trompot.",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -38,7 +38,7 @@
   "dependencies": {
     "@adiwajshing/keyed-db": "0.2.4",
     "@hapi/boom": "9.1.3",
-    "@whiskeysockets/baileys": "7.0.0-rc.9",
+    "@whiskeysockets/baileys": "7.0.0-rc14",
     "axios": "1.13.2",
     "body-parser": "1.20.2",
     "cluster": "0.7.7",
@@ -46,7 +46,7 @@
     "express": "5.2.1",
     "long": "5.2.3",
     "node-cache": "5.1.2",
-    "node-telegram-bot-api": "0.66.0",
+    "node-telegram-bot-api": "1.2.0",
     "pino": "9.7.0"
   },
   "files": [
@@ -58,7 +58,6 @@
     "@types/body-parser": "1.19.5",
     "@types/express": "5.0.2",
     "@types/node": "^22.15.29",
-    "@types/node-telegram-bot-api": "0.64.8",
     "@types/qrcode": "^1.5.6",
     "@types/ws": "8.18.1",
     "dotenv": "16.5.0",

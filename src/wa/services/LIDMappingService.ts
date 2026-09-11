@@ -1,6 +1,7 @@
 import { WASocket } from '@whiskeysockets/baileys';
 import { ILoggerService } from '../interfaces/ILoggerService';
 import { ICacheService } from '../interfaces/ICacheService';
+import { jidUser, toLidJid, toPnJid } from '../ID';
 
 export interface LIDMapping {
   lid: string;
@@ -25,30 +26,34 @@ export class LIDMappingService {
     this.socket = socket;
   }
 
+  private cachePn(lid: string, pn: string): void {
+    const cache = this.cache.getLIDMappingCache();
+    cache.set(`pn:${jidUser(pn)}`, lid);
+    cache.set(`lid:${jidUser(lid)}`, pn);
+  }
+
   /**
    * Obtém LID para um PN usando o store interno do Baileys
+   * rc14: getLIDForPN exige JID PN completo (`user@s.whatsapp.net`)
    */
   async getLIDForPN(pn: string): Promise<string | undefined> {
-    if (!this.socket) {
+    if (!this.socket || !pn) {
       return undefined;
     }
 
+    const pnJid = toPnJid(pn);
+
     try {
-      // Verifica cache primeiro
       const cache = this.cache.getLIDMappingCache();
-      const cachedLID = cache.get<string>(`pn:${pn}`);
+      const cachedLID = cache.get<string>(`pn:${jidUser(pnJid)}`);
       if (cachedLID) {
         return cachedLID;
       }
 
-      // Usa o store interno do Baileys
-      const lid = await this.socket.signalRepository.lidMapping.getLIDForPN(pn);
-      
+      const lid = await this.socket.signalRepository.lidMapping.getLIDForPN(pnJid);
+
       if (lid) {
-        // Armazena no cache
-        cache.set(`pn:${pn}`, lid);
-        cache.set(`lid:${lid}`, pn);
-        // Log removido para reduzir verbosidade
+        this.cachePn(lid, pnJid);
       }
 
       return lid || undefined;
@@ -60,28 +65,26 @@ export class LIDMappingService {
 
   /**
    * Obtém PN para um LID usando o store interno do Baileys
+   * rc14: getPNForLID ignora valores sem sufixo `@lid`
    */
   async getPNForLID(lid: string): Promise<string | undefined> {
-    if (!this.socket) {
+    if (!this.socket || !lid) {
       return undefined;
     }
 
+    const lidJid = toLidJid(lid);
+
     try {
-      // Verifica cache primeiro
       const cache = this.cache.getLIDMappingCache();
-      const cachedPN = cache.get<string>(`lid:${lid}`);
+      const cachedPN = cache.get<string>(`lid:${jidUser(lidJid)}`);
       if (cachedPN) {
         return cachedPN;
       }
 
-      // Usa o store interno do Baileys
-      const pn = await this.socket.signalRepository.lidMapping.getPNForLID(lid);
-      
+      const pn = await this.socket.signalRepository.lidMapping.getPNForLID(lidJid);
+
       if (pn) {
-        // Armazena no cache
-        cache.set(`lid:${lid}`, pn);
-        cache.set(`pn:${pn}`, lid);
-        // Log removido para reduzir verbosidade
+        this.cachePn(lidJid, pn);
       }
 
       return pn || undefined;
@@ -93,49 +96,34 @@ export class LIDMappingService {
 
   /**
    * Armazena mapeamento LID/PN
+   * rc14: storeLIDPNMappings valida isLidUser(lid) && isPnUser(pn)
    */
   async storeLIDPNMapping(lid: string, pn: string): Promise<void> {
-    if (!this.socket) {
-      return;
-    }
-
-    try {
-      // Armazena no store interno do Baileys (usa storeLIDPNMappings com array)
-      await this.socket.signalRepository.lidMapping.storeLIDPNMappings([{ lid, pn }]);
-      
-      // Atualiza cache local
-      const cache = this.cache.getLIDMappingCache();
-      cache.set(`lid:${lid}`, pn);
-      cache.set(`pn:${pn}`, lid);
-      
-      // Log removido para reduzir verbosidade
-    } catch (error) {
-      this.logger.error('Erro ao armazenar mapeamento LID/PN', error);
-    }
+    await this.storeLIDPNMappings([{ lid, pn }]);
   }
 
   /**
    * Armazena múltiplos mapeamentos
    */
   async storeLIDPNMappings(mappings: LIDMapping[]): Promise<void> {
-    if (!this.socket) {
+    if (!this.socket || !mappings.length) {
+      return;
+    }
+
+    const pairs = mappings
+      .filter((m) => m.lid && m.pn)
+      .map((m) => ({ lid: toLidJid(m.lid), pn: toPnJid(m.pn) }));
+
+    if (!pairs.length) {
       return;
     }
 
     try {
-      // Armazena no store interno do Baileys
-      await this.socket.signalRepository.lidMapping.storeLIDPNMappings(
-        mappings.map(m => ({ lid: m.lid, pn: m.pn }))
-      );
-      
-      // Atualiza cache local
-      const cache = this.cache.getLIDMappingCache();
-      for (const mapping of mappings) {
-        cache.set(`lid:${mapping.lid}`, mapping.pn);
-        cache.set(`pn:${mapping.pn}`, mapping.lid);
+      await this.socket.signalRepository.lidMapping.storeLIDPNMappings(pairs);
+
+      for (const mapping of pairs) {
+        this.cachePn(mapping.lid, mapping.pn);
       }
-      
-      // Log removido para reduzir verbosidade
     } catch (error) {
       this.logger.error('Erro ao armazenar mapeamentos LID/PN', error);
     }
@@ -145,7 +133,6 @@ export class LIDMappingService {
    * Handler para evento lid-mapping.update
    */
   handleLIDMappingUpdate(mapping: LIDMapping): void {
-    // Log removido para reduzir verbosidade
     this.storeLIDPNMapping(mapping.lid, mapping.pn);
   }
 
@@ -156,4 +143,3 @@ export class LIDMappingService {
     this.cache.clearCache(this.cacheKey);
   }
 }
-

@@ -59,12 +59,12 @@ export class GroupEventHandler {
         for (const participant of participants) {
           const participantId = typeof participant === 'string' 
             ? participant 
-            : (participant as any).id || participant;
+            : (participant.phoneNumber || participant.id);
           await this.bot.groupParticipantsUpdate(
             userAction,
             id,
             participantId,
-            update.author || participantId
+            update.authorPn || update.author || participantId
           );
         }
       } catch (error) {

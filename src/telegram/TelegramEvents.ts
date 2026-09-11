@@ -1,4 +1,4 @@
-import TelegramBotAPI from "node-telegram-bot-api";
+import type { TelegramMessage } from "./telegramTypes";
 
 import Chat from "../modules/chat/Chat";
 import User from "../modules/user/User";
@@ -9,9 +9,9 @@ import TelegramBot from "./TelegramBot";
 
 export default class TelegramEvents {
   public telegram: TelegramBot;
-  private messageHandler?: (msg: TelegramBotAPI.Message) => Promise<void>;
-  private newChatMembersHandler?: (msg: TelegramBotAPI.Message) => Promise<void>;
-  private leftChatMemberHandler?: (msg: TelegramBotAPI.Message) => Promise<void>;
+  private messageHandler?: (msg: TelegramMessage) => Promise<void>;
+  private newChatMembersHandler?: (msg: TelegramMessage) => Promise<void>;
+  private leftChatMemberHandler?: (msg: TelegramMessage) => Promise<void>;
 
   constructor(telegram: TelegramBot) {
     this.telegram = telegram;
@@ -51,7 +51,7 @@ export default class TelegramEvents {
   }
 
   public configMessage() {
-    const receievMessage = async (msg: TelegramBotAPI.Message) => {
+    const receievMessage = async (msg: TelegramMessage) => {
       if (msg?.new_chat_members) return;
       if (msg?.left_chat_member) return;
 
@@ -73,7 +73,7 @@ export default class TelegramEvents {
   }
 
   public configNewChatMembers() {
-    const handler = async (msg: TelegramBotAPI.Message) => {
+    const handler = async (msg: TelegramMessage) => {
       const converter = new TelegramToRompotConverter(msg);
 
       const rompotMessage = await converter.convert(true);
@@ -116,7 +116,7 @@ export default class TelegramEvents {
   }
 
   public configLeftChatMember() {
-    const handler = async (msg: TelegramBotAPI.Message) => {
+    const handler = async (msg: TelegramMessage) => {
       const converter = new TelegramToRompotConverter(msg);
 
       const rompotMessage = await converter.convert(true);

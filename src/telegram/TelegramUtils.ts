@@ -1,19 +1,29 @@
-import TelegramBotAPI from "node-telegram-bot-api";
+import type {
+  TelegramChat,
+  TelegramContact,
+  TelegramMessage,
+  TelegramMessageEntity,
+  TelegramUser,
+} from './telegramTypes';
 
-import ChatType from "../modules/chat/ChatType";
+import ChatType from '../modules/chat/ChatType';
 
 export namespace TelegramUtils {
-  export function getId(data: Partial<TelegramBotAPI.Chat & TelegramBotAPI.User & TelegramBotAPI.Contact>): string {
-    if (!data || typeof data != "object") {
-      return "";
+  export function getId(
+    data: Partial<TelegramChat & TelegramUser & TelegramContact>,
+  ): string {
+    if (!data || typeof data != 'object') {
+      return '';
     }
 
-    return `${data.id || data.user_id || ""}`;
+    return `${data.id || data.user_id || ''}`;
   }
 
-  export function getName(data: Partial<TelegramBotAPI.Chat & TelegramBotAPI.User & TelegramBotAPI.Contact>): string {
-    if (!data || typeof data != "object") {
-      return "";
+  export function getName(
+    data: Partial<TelegramChat & TelegramUser & TelegramContact>,
+  ): string {
+    if (!data || typeof data != 'object') {
+      return '';
     }
 
     if (data.first_name && data.last_name) {
@@ -28,57 +38,65 @@ export namespace TelegramUtils {
       return `${data.username}`;
     }
 
-    return "";
+    return '';
   }
 
-  export function getNickname(data: Partial<TelegramBotAPI.Chat & TelegramBotAPI.User & TelegramBotAPI.Contact>): string {
-    if (!data || typeof data != "object") {
-      return "";
+  export function getNickname(
+    data: Partial<TelegramChat & TelegramUser & TelegramContact>,
+  ): string {
+    if (!data || typeof data != 'object') {
+      return '';
     }
 
-    return `${data.username || ""}`;
+    return `${data.username || ''}`;
   }
 
-  export function getChatType(chat: TelegramBotAPI.Chat): ChatType {
-    if (!chat || typeof chat != "object") {
+  export function getChatType(chat: TelegramChat): ChatType {
+    if (!chat || typeof chat != 'object') {
       return ChatType.PV;
     }
 
-    return chat.type == "private" ? ChatType.PV : ChatType.Group;
+    return chat.type == 'private' ? ChatType.PV : ChatType.Group;
   }
 
   export function getPhoneNumber(id: string | number): string {
-    return `${id}`.replace(/\D+/g, "") || "0";
+    return `${id}`.replace(/\D+/g, '') || '0';
   }
 
-  export function getText(msg: TelegramBotAPI.Message): string {
-    if (!msg || typeof msg != "object") {
-      return "";
+  export function getText(msg: TelegramMessage): string {
+    if (!msg || typeof msg != 'object') {
+      return '';
     }
 
-    return `${msg.text || msg.caption || ""}`;
+    return `${msg.text || msg.caption || ''}`;
   }
 
-  export function getMention(text: string, entity: TelegramBotAPI.MessageEntity): string {
-    if (!text || !entity || typeof entity != "object") {
-      return "";
+  export function getMention(
+    text: string,
+    entity: TelegramMessageEntity,
+  ): string {
+    if (!text || !entity || typeof entity != 'object') {
+      return '';
     }
 
-    if (entity.type != "mention") {
-      return "";
+    if (entity.type != 'mention') {
+      return '';
     }
 
     const start = Number(entity.offset || -1) + 1;
     const end = start + Number(entity.length || 0);
 
     if (end >= text.length) {
-      return "";
+      return '';
     }
 
     return `${text.slice(start, end)}`;
   }
 
-  export function getMentions(text: string, entities: TelegramBotAPI.MessageEntity | TelegramBotAPI.MessageEntity[]): string[] {
+  export function getMentions(
+    text: string,
+    entities: TelegramMessageEntity | TelegramMessageEntity[],
+  ): string[] {
     if (!text || !entities) {
       return [];
     }
@@ -98,7 +116,7 @@ export namespace TelegramUtils {
     }, [] as string[]);
   }
 
-  export function getMessageMentions(msg: TelegramBotAPI.Message): string[] {
+  export function getMessageMentions(msg: TelegramMessage): string[] {
     return getMentions(getText(msg), msg.entities!);
   }
 

@@ -215,6 +215,7 @@ export class ConnectionManager implements IConnectionManager {
     const nonReconnectableErrors = [
       DisconnectReason.loggedOut, // 401 - Token expirado
       ErrorCodes.LOGGED_OUT_ALT, // 421 - Token expirado (alternativo)
+      DisconnectReason.connectionReplaced, // 440 - outra sessão assumiu
     ];
 
     return !nonReconnectableErrors.includes(statusCode);

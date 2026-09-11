@@ -23,6 +23,7 @@ export const DisconnectReasons = {
 export const NON_RECONNECTABLE_ERRORS = [
   DisconnectReasons.LOGGED_OUT, // 401 - Token expirado
   DisconnectReasons.LOGGED_OUT_ALT, // 421 - Token expirado (alternativo)
+  ErrorCodes.CONNECTION_REPLACED, // 440 - outra sessão assumiu o dispositivo
   // 428 removido - não é sessão inválida, apenas erro temporário de conexão
 ] as const;
 

@@ -1,9 +1,12 @@
-import { WASocket, ConnectionState } from '@whiskeysockets/baileys';
+import { WASocket, ConnectionState, DisconnectReason } from '@whiskeysockets/baileys';
+import { Boom } from '@hapi/boom';
 import { ILoggerService } from '../interfaces/ILoggerService';
 import { IStateManager } from '../interfaces/IStateManager';
 import { ISessionManager } from '../interfaces/ISessionManager';
 import WhatsAppBot from '../WhatsAppBot';
 import { ErrorCodes, ErrorMessages } from '../constants/ErrorCodes';
+import { BotStatus } from '../../bot/BotStatus';
+import { fixID, getPhoneNumber } from '../ID';
 
 export class ConnectionEventHandler {
   private bot: WhatsAppBot;
@@ -68,7 +71,7 @@ export class ConnectionEventHandler {
     // NOTA: Os eventos 'connecting' e 'qr' já são emitidos pelo ConfigWAEvents
     // Não duplicar aqui para evitar logs duplicados
     if (update.connection === 'connecting') {
-      this.stateManager.setStatus(require('../../bot/BotStatus').BotStatus.Offline);
+      this.stateManager.setStatus(BotStatus.Offline);
       // this.bot.emit('connecting', { action: 'connecting' }); // Já emitido pelo ConfigWAEvents
     }
 
@@ -88,18 +91,16 @@ export class ConnectionEventHandler {
     try {
       const uptime = Date.now();
 
-      this.stateManager.setStatus(require('../../bot/BotStatus').BotStatus.Online);
+      this.stateManager.setStatus(BotStatus.Online);
       this.stateManager.setLastDisconnectError(undefined);
       this.stateManager.setConnectionStatus('connected');
 
       // Atualiza informações do bot
       // Tenta obter ID de múltiplas fontes (sock.user.id pode não estar disponível imediatamente)
       try {
-        const { fixID, getPhoneNumber } = require('../ID');
-        
         // 1. Tenta sock.user.id
         // 2. Tenta creds.me.id (das credenciais, mais confiável)
-        let rawId = this.bot.sock?.user?.id || '';
+        let rawId = this.bot.sock?.user?.phoneNumber || this.bot.sock?.user?.id || '';
         
         // Se não encontrou, tenta das credenciais
         if (!rawId && this.bot.sock?.authState?.creds?.me?.id) {
@@ -178,14 +179,11 @@ export class ConnectionEventHandler {
    * Trata quando a conexão é fechada
    */
   private async handleClose(update: ConnectionState): Promise<void> {
-    this.stateManager.setStatus(require('../../bot/BotStatus').BotStatus.Offline);
+    this.stateManager.setStatus(BotStatus.Offline);
     this.stateManager.setConnectionStatus('disconnected');
 
-    const { DisconnectReason } = require('@whiskeysockets/baileys');
-    const { Boom } = require('@hapi/boom');
-
     const status =
-      (update.lastDisconnect?.error as typeof Boom)?.output?.statusCode ||
+      (update.lastDisconnect?.error as Boom)?.output?.statusCode ||
       (typeof update.lastDisconnect?.error === 'number'
         ? update.lastDisconnect.error
         : undefined) ||
@@ -274,6 +272,12 @@ export class ConnectionEventHandler {
       } catch (error) {
         this.logger.error('Erro ao tentar reconectar após erro 500', error);
       }
+    } else if (status === DisconnectReason.connectionReplaced || status === ErrorCodes.CONNECTION_REPLACED) {
+      this.bot.emit('close', {
+        reason: status,
+        message: ErrorMessages.CONNECTION_REPLACED,
+      });
+      this.bot.emit('stop', { isLogout: false });
     } else if (status === DisconnectReason.restartRequired) {
       // Após autenticação (QR code escaneado), o WhatsApp força restartRequired
       // Salva credenciais e cria novo socket imediatamente
@@ -304,8 +308,7 @@ export class ConnectionEventHandler {
     // Atualiza informações do bot se credenciais contiverem me.id
     if (creds?.me?.id) {
       try {
-        const { fixID, getPhoneNumber } = require('../ID');
-        const rawId = creds.me.id;
+        const rawId = creds.me.phoneNumber || creds.me.id;
         const id = fixID(rawId);
         
         // Atualiza apenas se ainda não tiver ID ou se o ID mudou

@@ -201,7 +201,7 @@ export default class ConfigWAEvents {
             // Tenta obter ID de múltiplas fontes (sock.user.id pode não estar disponível imediatamente)
             // 1. Tenta sock.user.id
             // 2. Tenta creds.me.id (das credenciais, mais confiável)
-            let rawId = this.wa.sock?.user?.id || '';
+            let rawId = this.wa.sock?.user?.phoneNumber || this.wa.sock?.user?.id || '';
             
             // Se não encontrou, tenta das credenciais
             if (!rawId && this.wa.sock?.authState?.creds?.me?.id) {
@@ -239,6 +239,10 @@ export default class ConfigWAEvents {
           }
 
           this.wa.emit('open', { isNewLogin: update.isNewLogin || false });
+
+          if (update.reachoutTimeLock?.isActive) {
+            this.wa.emit('error', new Error(ErrorMessages.REACHOUT_TIMELOCK));
+          }
 
           // REMOVIDO: Auto-restart que estava causando reconexões desnecessárias
           // O Baileys já gerencia a conexão automaticamente
